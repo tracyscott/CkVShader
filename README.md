@@ -4,26 +4,51 @@ Please note that LX is not open-source software. The license grants permission t
 
 ---
 
-## LX Package
+# CkVShader
 
-This is a template repository used to demonstrate how to build a package for [Chromatik](https://chromatik.co/) using the [LX](https://github.com/heronarts/LX/) framework.
+A Chromatik/LX package that enables vertex shader-based volumetric rendering for LED installations. CkVShader provides GPU-accelerated lighting effects using OpenGL shaders with support for Interactive Shader Format (ISF) metadata parsing.
+
+![CkVShader in action](assets/screenshot.png)
+
+## Features
+
+- **Vertex Shader Processing**: GPU-accelerated LED point rendering with transform feedback
+- **ISF Support**: Interactive Shader Format with JSON metadata for dynamic parameters
+- **Shader Caching**: Binary shader program caching for optimal performance
+- **Audio Integration**: Audio texture generation from LX audio meter (CkVShaderTex)
+- **Modular Development**: `#include` directive preprocessing for shader modularity
+- **Dynamic Parameters**: Automatic UI generation from shader ISF metadata
+
+## Quick Start
 
 Learn to code in LX via the [Chromatik Developer Guide &rarr;](https://chromatik.co/develop/)
 
-### Package Structure
+## Architecture
 
-- Metadata
-  - Define your packages metadata in the [`lx.package`](src/main/resources/lx.package) file, JSON format with three key fields
-     - `name`: Name of the package
-     - `author`: Name of the package author
-     - `mediaDir`: Subfolder name for package static resources in the `~/Chromatik/` user folder
-- Java Components
-  - Your package can contain custom patterns, effects, modulators, and plugins
-  - Java source code lives under [`src/main/java`](src/main/java) and may use the [LX](https://github.com/heronarts/LX/) API
-  - Chromatik will automatically import all public non-abstract classes
-- Static Resources
-  - Static resources like fixture definitions (`*.lxf`), model definitions (`*.lxm`), or project files (`*.lxp`) can be bundled with a package. These live in the [`src/main/resources`](src/main/resources) folder under the subfolders `fixtures`, `models`, `projects`.
-  - When the package is imported using the Chromatik UI, these static resources will be copied into the `~/Chromatik` user folder, in a sub-folder defined by the `mediaDir` property of the [`lx.package`](src/main/resources/lx.package) file.
+### Core Components
+
+- **CkVShader**: Main vertex shader pattern with ISF parameter parsing and shader caching
+- **CkVShaderTex**: Texture-enabled vertex shader pattern with audio texture support  
+- **GLUtil**: OpenGL utilities, shader compilation, and file loading with `#include` preprocessing
+- **ShaderCache**: Compiled shader caching system for performance optimization
+
+### File Structure
+
+- **Shaders**: `~/Chromatik/CkVShader/*.vtx` - Vertex shader files with ISF metadata
+- **Textures**: `~/Chromatik/CkVShader/textures/*.png` - Image resources for texture patterns
+- **Cache**: `~/Chromatik/CkVShader/cache/` - Binary shader program cache
+
+### ISF Shader Format
+
+Shaders support Interactive Shader Format with JSON metadata:
+
+```glsl
+/*{
+  "INPUTS": [
+    {"NAME": "param1", "TYPE": "float", "DEFAULT": 1.0, "MIN": 0.0, "MAX": 10.0}
+  ]
+}*/
+```
 
 ### Building and Installation
 
