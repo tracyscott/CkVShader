@@ -57,5 +57,3 @@ _Note that `mvn -Pinstall install` does **not** automatically copy static files 
 ### Need Help?
 
 Join us on [Discord &rarr;](https://chromatik.co/discord)
-
-Or send an email to [support@chromatik.co](support@chromatik.co)
