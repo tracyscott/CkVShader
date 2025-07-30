@@ -1,0 +1,15 @@
+{
+  name: "CkVShader",
+  mediaDir: "CkVShader",
+  author: "Tracy Scott",
+  url: "https://github.com/tracyscott/CkVShader",
+  
+  build: {
+    name: "@project.name@",
+    version: "@project.version@",
+    groupId: "@project.groupId@",
+    artifactId: "@project.artifactId@",
+    lxVersion: "@lx.version@",
+    buildTimestamp: "@maven.build.timestamp@"
+  }
+}
