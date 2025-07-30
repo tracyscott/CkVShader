@@ -10,6 +10,8 @@ import heronarts.lx.LX;
 import heronarts.lx.color.LXColor;
 import heronarts.lx.model.LXPoint;
 
+import java.awt.image.BufferedImage;
+
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -24,6 +26,9 @@ import static com.jogamp.opengl.GL.GL_POINTS;
 import static com.jogamp.opengl.GL2ES2.GL_VERTEX_SHADER;
 import static com.jogamp.opengl.GL2ES3.*;
 import static com.jogamp.opengl.GL2ES3.GL_RASTERIZER_DISCARD;
+
+import com.jogamp.opengl.GL2ES2;
+import com.jogamp.opengl.GL2ES3;
 
 public class GLUtil {
   
@@ -79,7 +84,7 @@ public class GLUtil {
   static public VSGLContext vsGLInit(LX lx, com.jogamp.opengl.util.texture.Texture glTexture, String scriptName,
                                      LinkedHashMap<String, Float> scriptParams) {
 
-    CkVShader.initializeGLContext();
+    CkVShader.initializeGLContext(lx);
     GL3 gl = CkVShader.glDrawable.getGL().getGL3();
 
     VSGLContext vsGLContext = new VSGLContext(gl);
@@ -486,5 +491,203 @@ public class GLUtil {
 
   static public String shaderDir(LX lx) {
     return lx.getMediaPath() + File.separator + "CkVShader";
+  }
+
+  /**
+   * Texture resource management and monitoring utilities
+   */
+  public static class TextureLimits {
+    public final int maxTextureUnits;
+    public final int maxCombinedTextureUnits;
+    public final int maxTextureSize;
+    public final int max3DTextureSize;
+    public final int maxArrayTextureLayers;
+
+    public TextureLimits(int maxTextureUnits, int maxCombinedTextureUnits, int maxTextureSize, 
+                        int max3DTextureSize, int maxArrayTextureLayers) {
+      this.maxTextureUnits = maxTextureUnits;
+      this.maxCombinedTextureUnits = maxCombinedTextureUnits;
+      this.maxTextureSize = maxTextureSize;
+      this.max3DTextureSize = max3DTextureSize;
+      this.maxArrayTextureLayers = maxArrayTextureLayers;
+    }
+
+    @Override
+    public String toString() {
+      return String.format("TextureLimits{maxUnits=%d, maxCombined=%d, maxSize=%d, max3D=%d, maxArrayLayers=%d}",
+        maxTextureUnits, maxCombinedTextureUnits, maxTextureSize, max3DTextureSize, maxArrayTextureLayers);
+    }
+  }
+
+  /**
+   * Query OpenGL texture limits from hardware
+   */
+  public static TextureLimits queryTextureLimits(GL3 gl) {
+    IntBuffer intBuffer = IntBuffer.allocate(1);
+    
+    gl.glGetIntegerv(GL2ES2.GL_MAX_TEXTURE_IMAGE_UNITS, intBuffer);
+    int maxTextureUnits = intBuffer.get(0);
+    
+    gl.glGetIntegerv(GL2ES2.GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, intBuffer);
+    int maxCombinedTextureUnits = intBuffer.get(0);
+    
+    gl.glGetIntegerv(GL.GL_MAX_TEXTURE_SIZE, intBuffer);
+    int maxTextureSize = intBuffer.get(0);
+    
+    // These may not be available in all OpenGL versions, use safe defaults
+    int max3DTextureSize = maxTextureSize; // Safe fallback
+    int maxArrayTextureLayers = 256; // Reasonable default
+    
+    try {
+      gl.glGetIntegerv(GL2ES3.GL_MAX_3D_TEXTURE_SIZE, intBuffer);
+      max3DTextureSize = intBuffer.get(0);
+    } catch (Exception e) {
+      LX.log("GL_MAX_3D_TEXTURE_SIZE not available, using fallback: " + max3DTextureSize);
+    }
+    
+    try {
+      gl.glGetIntegerv(GL2ES3.GL_MAX_ARRAY_TEXTURE_LAYERS, intBuffer);
+      maxArrayTextureLayers = intBuffer.get(0);
+    } catch (Exception e) {
+      LX.log("GL_MAX_ARRAY_TEXTURE_LAYERS not available, using fallback: " + maxArrayTextureLayers);
+    }
+    
+    return new TextureLimits(maxTextureUnits, maxCombinedTextureUnits, maxTextureSize, 
+                           max3DTextureSize, maxArrayTextureLayers);
+  }
+
+  /**
+   * Check for OpenGL errors and log them
+   */
+  public static boolean checkGLError(GL3 gl, String operation) {
+    int error = gl.glGetError();
+    if (error != GL.GL_NO_ERROR) {
+      String errorString = getGLErrorString(error);
+      LX.log("OpenGL error during " + operation + ": " + errorString + " (0x" + Integer.toHexString(error) + ")");
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Convert OpenGL error code to human-readable string
+   */
+  public static String getGLErrorString(int error) {
+    switch (error) {
+      case GL.GL_NO_ERROR: return "No error";
+      case GL.GL_INVALID_ENUM: return "Invalid enum";
+      case GL.GL_INVALID_VALUE: return "Invalid value";
+      case GL.GL_INVALID_OPERATION: return "Invalid operation";
+      case GL.GL_OUT_OF_MEMORY: return "Out of memory";
+      case GL.GL_INVALID_FRAMEBUFFER_OPERATION: return "Invalid framebuffer operation";
+      default: return "Unknown error";
+    }
+  }
+
+  /**
+   * Validate texture dimensions against hardware limits
+   */
+  public static boolean validateTextureSize(int width, int height, TextureLimits limits) {
+    if (width > limits.maxTextureSize || height > limits.maxTextureSize) {
+      LX.log("Texture size " + width + "x" + height + " exceeds hardware limit of " + limits.maxTextureSize);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Safely resize a BufferedImage if it exceeds size limits
+   */
+  public static BufferedImage resizeTextureIfNeeded(BufferedImage image, int maxSize) {
+    if (image.getWidth() <= maxSize && image.getHeight() <= maxSize) {
+      return image;
+    }
+    
+    int newWidth = Math.min(image.getWidth(), maxSize);
+    int newHeight = Math.min(image.getHeight(), maxSize);
+    
+    // Maintain aspect ratio
+    if (image.getWidth() > image.getHeight()) {
+      newHeight = (int) ((double) newWidth / image.getWidth() * image.getHeight());
+    } else {
+      newWidth = (int) ((double) newHeight / image.getHeight() * image.getWidth());
+    }
+    
+    LX.log("Resizing texture from " + image.getWidth() + "x" + image.getHeight() + 
+           " to " + newWidth + "x" + newHeight);
+    
+    BufferedImage resized = new BufferedImage(newWidth, newHeight, image.getType());
+    resized.getGraphics().drawImage(image.getScaledInstance(newWidth, newHeight, BufferedImage.SCALE_SMOOTH), 0, 0, null);
+    return resized;
+  }
+
+  /**
+   * Texture resource monitoring and diagnostics
+   */
+  public static class TextureMonitor {
+    private static int textureCreationCount = 0;
+    private static int textureDisposalCount = 0;
+    private static long totalTextureMemoryAllocated = 0;
+    
+    public static void recordTextureCreation(int width, int height, int bytesPerPixel) {
+      textureCreationCount++;
+      totalTextureMemoryAllocated += (long) width * height * bytesPerPixel;
+      LX.log("Texture created: " + width + "x" + height + " (" + (width * height * bytesPerPixel) + " bytes)" +
+             " | Total: " + textureCreationCount + " created, " + textureDisposalCount + " disposed" +
+             " | Estimated memory: " + (totalTextureMemoryAllocated / 1024 / 1024) + " MB");
+    }
+    
+    public static void recordTextureDisposal(int width, int height, int bytesPerPixel) {
+      textureDisposalCount++;
+      totalTextureMemoryAllocated -= (long) width * height * bytesPerPixel;
+      LX.log("Texture disposed: " + width + "x" + height + " (" + (width * height * bytesPerPixel) + " bytes)" +
+             " | Total: " + textureCreationCount + " created, " + textureDisposalCount + " disposed" +
+             " | Estimated memory: " + (totalTextureMemoryAllocated / 1024 / 1024) + " MB");
+    }
+    
+    public static String getStats() {
+      int leakedTextures = textureCreationCount - textureDisposalCount;
+      return String.format("Texture Stats: %d created, %d disposed, %d potentially leaked, %d MB estimated memory",
+        textureCreationCount, textureDisposalCount, leakedTextures, totalTextureMemoryAllocated / 1024 / 1024);
+    }
+    
+    public static void reset() {
+      textureCreationCount = 0;
+      textureDisposalCount = 0;
+      totalTextureMemoryAllocated = 0;
+    }
+  }
+
+  /**
+   * Get current OpenGL texture binding state for debugging
+   */
+  public static void logTextureBindingState(GL3 gl) {
+    IntBuffer intBuffer = IntBuffer.allocate(1);
+    
+    // Get currently bound textures for each texture unit
+    for (int unit = 0; unit < 8; unit++) { // Check first 8 texture units
+      gl.glActiveTexture(GL.GL_TEXTURE0 + unit);
+      gl.glGetIntegerv(GL.GL_TEXTURE_BINDING_2D, intBuffer);
+      int boundTexture = intBuffer.get(0);
+      if (boundTexture != 0) {
+        LX.log("Texture unit " + unit + " has texture " + boundTexture + " bound");
+      }
+    }
+    
+    // Get active texture unit
+    gl.glGetIntegerv(GL.GL_ACTIVE_TEXTURE, intBuffer);
+    int activeUnit = intBuffer.get(0) - GL.GL_TEXTURE0;
+    LX.log("Active texture unit: " + activeUnit);
+  }
+
+  /**
+   * Validate that texture units are within hardware limits
+   */
+  public static boolean validateTextureUnitUsage(int textureUnit, TextureLimits limits) {
+    if (textureUnit >= limits.maxTextureUnits) {
+      LX.log("Texture unit " + textureUnit + " exceeds hardware limit of " + limits.maxTextureUnits);
+      return false;
+    }
+    return true;
   }
 }

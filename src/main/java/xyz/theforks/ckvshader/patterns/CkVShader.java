@@ -6,6 +6,7 @@ import heronarts.glx.ui.vg.VGraphics;
 import heronarts.lx.model.LXPoint;
 import xyz.theforks.ckvshader.util.GLUtil;
 import xyz.theforks.ckvshader.util.ShaderCache;
+import xyz.theforks.ckvshader.util.ShaderResourceUtil;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -81,7 +82,11 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
   public CkVShader(LX lx) {
     super(lx);
 
-    initializeGLContext();
+    initializeGLContext(lx);
+    // Export default shaders from JAR resources to filesystem
+    // Do this after GL context is initialized but before shader cache
+    ShaderResourceUtil.exportDefaultShaders(lx);
+    
     shaderCache = ShaderCache.getInstance(lx);
     addParameter("scriptName", scriptName);
     addParameter("speed", speed);
@@ -95,6 +100,10 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
    * annoying.
    */
   static public void initializeGLContext() {
+    initializeGLContext(null);
+  }
+
+  static public void initializeGLContext(LX lx) {
     logger.info("Calling initializeGLContext");
     if (glDrawable == null) {
       GLProfile glp = GLProfile.get(GLProfile.GL4);

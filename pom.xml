@@ -151,7 +151,7 @@
                                     <resources>
                                         <resource>
                                             <directory>${project.build.directory}</directory>
-                                            <include>${project.artifactId}-${project.version}.jar</include>
+                                            <include>${project.artifactId}-${project.version}-jar-with-dependencies.jar</include>
                                             <filtering>false</filtering>
                                         </resource>
                                     </resources>

@@ -1,0 +1,119 @@
+/*{
+	"DESCRIPTION": "pinkturb",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"VERTEX SDF"
+	],
+	"INPUTS": [
+         {
+            "NAME": "turbNum",
+            "TYPE": "float",
+            "DEFAULT": 10.0,
+            "MIN": 1.0,
+            "MAX": 20.0
+         },
+         {
+            "NAME": "turbAmp",
+            "TYPE": "float",
+            "DEFAULT": 0.7,
+            "MIN": 0.0,
+            "MAX": 2.0
+         },
+         {
+            "NAME": "turbSpeed",
+            "TYPE": "float",
+            "DEFAULT": 0.3,
+            "MIN": 0.0,
+            "MAX": 2.0
+         },
+         {
+            "NAME": "turbFreq",
+            "TYPE": "float",
+            "DEFAULT": 8.0,
+            "MIN": 0.1,
+            "MAX": 20.0
+         },
+         {
+            "NAME": "turbExp",
+            "TYPE": "float",
+            "DEFAULT": 1.1,
+            "MIN": 1.0,
+            "MAX": 2.0
+         },
+         {
+            "NAME": "offsetX",
+            "TYPE": "float",
+            "DEFAULT": -2.2,
+            "MIN": -5.0,
+            "MAX": 5.0
+         },
+         {
+            "NAME": "offsetY",
+            "TYPE": "float",
+            "DEFAULT": -1.0,
+            "MIN": -5.0,
+            "MAX": 5.0
+         },
+         {
+            "NAME": "scaleX",
+            "TYPE": "float",
+            "DEFAULT": 0.5,
+            "MIN": 0.1,
+            "MAX": 2.0
+         }
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float turbNum;
+uniform float turbAmp;
+uniform float turbSpeed;
+uniform float turbFreq;
+uniform float turbExp;
+uniform float offsetX;
+uniform float offsetY;
+uniform float scaleX;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+
+vec2 turbulence(vec2 p)
+{
+    float freq = turbFreq;
+    
+    mat2 rot = mat2(0.6, -0.8, 0.8, 0.6);
+    
+    for(float i=0.0; i<turbNum; i++)
+    {
+        float phase = freq * (p * rot).y + turbSpeed*fTime + i;
+        p += turbAmp * rot[0] * sin(phase) / freq;
+        
+        rot *= mat2(0.6, -0.8, 0.8, 0.6);
+        freq *= turbExp;
+    }
+    
+    return p;
+}
+
+void main() {
+    vec2 p = position.xy;
+    
+    p = 2.0 * p - 1.0;
+    
+    p.x += offsetX;
+    p.y += offsetY;
+    p.x = p.x * scaleX;
+    
+    p = turbulence(p);
+    
+    vec3 col = 0.5*exp(0.7*vec3(2,0,2));
+    col /= dot(cos(p*3.),sin(-p.yx*0.4*3.918))+2.0;
+    col = 1.0 - exp(-col);
+    
+    outColor = clamp(col, 0.0, 1.0);
+}

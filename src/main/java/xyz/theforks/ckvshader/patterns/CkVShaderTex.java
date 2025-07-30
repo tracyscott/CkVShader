@@ -91,13 +91,16 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
     addParameter("alfTh", alphaThresh);
 
 
-    CkVShader.initializeGLContext();
+    CkVShader.initializeGLContext(lx);
+    // Export default shaders from JAR resources to filesystem
+    xyz.theforks.ckvshader.util.ShaderResourceUtil.exportDefaultShaders(lx);
+    
     shaderCache = ShaderCache.getInstance(lx);
     
     texName.setValue("fractal5");
-    reloadTexture(texName.getString());
-
+    
     glInit();
+    reloadTexture(texName.getString());
   }
 
   private interface Buffer {
@@ -129,6 +132,10 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
   // Shader caching
   private ShaderCache shaderCache;
   private boolean forceReload = false;
+  
+  // Texture resource management
+  private GLUtil.TextureLimits textureLimits;
+  private boolean textureInitialized = false;
 
   protected void updateLedPositions() {
     for (int i = 0; i < model.points.length; i++) {
@@ -143,19 +150,25 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
     if (fftTextureLoc < 0 || audioTextureHandle[0] == 0) {
       return;
     }
-    //LX.log("Updating audio texture");
+    
+    // Validate texture handle
+    if (audioTextureHandle[0] <= 0) {
+      LX.log("Invalid audio texture handle: " + audioTextureHandle[0]);
+      return;
+    }
+    
     GraphicMeter eq = lx.engine.audio.meter;
     for (int i = 0; i < 1024; i++) {
       int bandVal = (int)(eq.getBandf(i%16) * 255.0);
       fft[i++] = (byte)(bandVal);
     }
     ByteBuffer fftBuf = ByteBuffer.wrap(fft);
+    
     gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
-    // tex0.resize(context, GL2.GL_R8, 512, 2, GL2.GL_RED, GL2.GL_UNSIGNED_BYTE,
-    //        GL2.GL_LINEAR, GL2.GL_MIRRORED_REPEAT, 1, 1, fftBuf);
-
-    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 512, 2, 0, GL_RED, GL_UNSIGNED_BYTE,
-      fftBuf);
+    GLUtil.checkGLError(gl, "audio texture bind");
+    
+    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 512, 2, 0, GL_RED, GL_UNSIGNED_BYTE, fftBuf);
+    GLUtil.checkGLError(gl, "audio texture data update");
   }
 
   /**
@@ -171,6 +184,13 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
 
     CkVShader.glDrawable.getContext().makeCurrent();
     gl = CkVShader.glDrawable.getGL().getGL3();
+    
+    // Query texture limits from hardware
+    if (textureLimits == null) {
+      textureLimits = GLUtil.queryTextureLimits(gl);
+      LX.log("OpenGL Texture Limits: " + textureLimits.toString());
+    }
+    
     vertexBuffer = FloatBuffer.wrap(ledPositions);
     //vertexBuffer = GLBuffers.newDirectFloatBuffer(ledPositions);
 
@@ -188,13 +208,23 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
       gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_MIRRORED_REPEAT);
     }
     gl.glGenBuffers(Buffer.MAX, bufferNames);
+    GLUtil.checkGLError(gl, "buffer generation");
+    
     // Set up audio texture.
     gl.glGenTextures(1, audioTextureHandle, 0);
-    gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
-    gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
-    gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST);
-    gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_MIRRORED_REPEAT);
-    gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_MIRRORED_REPEAT);
+    GLUtil.checkGLError(gl, "audio texture generation");
+    
+    if (audioTextureHandle[0] > 0) {
+      gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_MIRRORED_REPEAT);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_MIRRORED_REPEAT);
+      GLUtil.checkGLError(gl, "audio texture parameter setting");
+      LX.log("Created audio texture with handle: " + audioTextureHandle[0]);
+    } else {
+      LX.log("Failed to generate audio texture handle");
+    }
 
     CkVShader.glDrawable.getContext().release();
 
@@ -392,24 +422,43 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
       textureImage = ImageIO.read(new File(texturesDir + textureName + ".png"));
     } catch (IOException ioex) {
       LX.log("Error loading texture: " + textureName + " : " + ioex.getMessage());
+      return;
     }
-    /*
-    if (textureImage != null && (textureImage.getWidth() != TEXTURE_SIZE || textureImage.getHeight() != TEXTURE_SIZE)) {
-      textureImage = JavaUtil.resize(textureImage, TEXTURE_SIZE, TEXTURE_SIZE);
+    // Validate and resize texture if needed
+    if (textureImage != null && textureLimits != null) {
+      if (!GLUtil.validateTextureSize(textureImage.getWidth(), textureImage.getHeight(), textureLimits)) {
+        textureImage = GLUtil.resizeTextureIfNeeded(textureImage, textureLimits.maxTextureSize);
+      }
     }
-     */
 
     CkVShader.glDrawable.getContext().makeCurrent();
-    if (textureImage != null)
+    
+    // Clean up old texture to prevent memory leaks
+    if (glTexture != null) {
+      LX.log("Cleaning up old texture");
+      glTexture.destroy(gl);
+      GLUtil.checkGLError(gl, "texture cleanup");
+    }
+    
+    if (textureImage != null) {
       glTexture = AWTTextureIO.newTexture(CkVShader.glDrawable.getGLProfile(), textureImage, false);
+      GLUtil.checkGLError(gl, "texture creation");
+      
+      // Record texture creation for monitoring
+      int bytesPerPixel = textureImage.getColorModel().hasAlpha() ? 4 : 3;
+      GLUtil.TextureMonitor.recordTextureCreation(textureImage.getWidth(), textureImage.getHeight(), bytesPerPixel);
+    }
 
     if (glTexture != null && gl != null) {
       // Set texture parameters for sampling
       glTexture.bind(gl);
+      GLUtil.checkGLError(gl, "texture bind");
+      
       gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
       gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST);
       gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT);
       gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT);
+      GLUtil.checkGLError(gl, "texture parameter setting");
     }
     CkVShader.glDrawable.getContext().release();
   }
@@ -457,16 +506,22 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
     for (String paramName : scriptParams.keySet()) {
       gl.glUniform1f(paramLocations.get(paramName), scriptParams.get(paramName).getValuef());
     }
-    if (glTexture != null) {
-      //logger.info("Attempting to bind the textureLoc to slot 0.");
-      glTexture.enable(gl);
-      glTexture.bind(gl);
-      gl.glUniform1i(textureLoc, 0); // 0 is the texture unit
+    if (glTexture != null && textureLoc >= 0) {
+      if (GLUtil.validateTextureUnitUsage(0, textureLimits)) {
+        gl.glActiveTexture(GL_TEXTURE0);
+        glTexture.enable(gl);
+        glTexture.bind(gl);
+        gl.glUniform1i(textureLoc, 0); // 0 is the texture unit
+        GLUtil.checkGLError(gl, "main texture binding");
+      }
     }
-    if (audioTextureHandle[0] != 0) {
-      gl.glActiveTexture(GL_TEXTURE1);
-      gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
-      gl.glUniform1i(fftTextureLoc, 1);
+    if (audioTextureHandle[0] > 0 && fftTextureLoc >= 0) {
+      if (GLUtil.validateTextureUnitUsage(1, textureLimits)) {
+        gl.glActiveTexture(GL_TEXTURE1);
+        gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
+        gl.glUniform1i(fftTextureLoc, 1);
+        GLUtil.checkGLError(gl, "audio texture binding");
+      }
     }
 
     gl.glBeginTransformFeedback(GL_POINTS);
@@ -513,6 +568,37 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
       removeParameter(key);
     }
     scriptParams.clear();
+  }
+
+  @Override
+  public void dispose() {
+    // Clean up texture resources
+    if (gl != null) {
+      CkVShader.glDrawable.getContext().makeCurrent();
+      
+      if (glTexture != null) {
+        LX.log("Disposing main texture");
+        glTexture.destroy(gl);
+        glTexture = null;
+      }
+      
+      if (audioTextureHandle[0] > 0) {
+        LX.log("Disposing audio texture");
+        gl.glDeleteTextures(1, audioTextureHandle, 0);
+        audioTextureHandle[0] = 0;
+      }
+      
+      if (shaderProgramId != -1) {
+        LX.log("Disposing shader program");
+        gl.glDeleteProgram(shaderProgramId);
+        shaderProgramId = -1;
+      }
+      
+      GLUtil.checkGLError(gl, "resource disposal");
+      CkVShader.glDrawable.getContext().release();
+    }
+    
+    super.dispose();
   }
 
   public void run(double deltaMs) {
@@ -655,6 +741,30 @@ public class CkVShaderTex extends LXPattern implements UIDeviceControls<CkVShade
     }.setIcon(ui.theme.iconLoad)
       .setMomentary(true)
       .setDescription("Clear shader cache")
+      .addToContainer(uiDevice);
+
+    final UIButton textureStatsButton = (UIButton) new UIButton(164, 22, 18, 18) {
+      @Override
+      public void onToggle(boolean on) {
+        if (on) {
+          lx.engine.addTask(() -> {
+            LX.log("=== Texture Statistics ===");
+            LX.log(GLUtil.TextureMonitor.getStats());
+            if (textureLimits != null) {
+              LX.log("Hardware Limits: " + textureLimits.toString());
+            }
+            if (gl != null) {
+              CkVShader.glDrawable.getContext().makeCurrent();
+              GLUtil.logTextureBindingState(gl);
+              CkVShader.glDrawable.getContext().release();
+            }
+            LX.log("========================");
+          });
+        }
+      }
+    }.setIcon(ui.theme.iconOpen)
+      .setMomentary(true)
+      .setDescription("Show texture statistics")
       .addToContainer(uiDevice);
 
 

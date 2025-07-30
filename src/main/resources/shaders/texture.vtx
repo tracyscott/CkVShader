@@ -1,0 +1,95 @@
+/*{
+	"DESCRIPTION": "texture",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"TEXTURE SHADER"
+	],
+	"INPUTS": [
+         {
+            "NAME": "x1",
+            "TYPE": "float",
+            "DEFAULT": 0.0,
+            "MIN": -10,
+            "MAX": 10
+         },
+         {
+            "NAME": "y1",
+            "TYPE": "float",
+            "DEFAULT": 0.0,
+            "MIN": -10,
+            "MAX": 10
+         },
+          {
+         "NAME": "zoomx",
+           "TYPE": "float",
+           "DEFAULT": 1.0,
+           "MIN": 0.1,
+           "MAX": 5
+        },
+        {
+                 "NAME": "zoomy",
+                   "TYPE": "float",
+                   "DEFAULT": 1.0,
+                   "MIN": 0.1,
+                   "MAX": 5
+                },
+       {
+                        "NAME": "rotspd",
+                          "TYPE": "float",
+                          "DEFAULT": 0,
+                          "MIN": -20.0,
+                          "MAX": 20
+                       }
+
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float x1;
+uniform float y1;
+uniform float zoomx;
+uniform float zoomy;
+uniform float rotspd;
+
+uniform sampler2D textureSampler;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+
+void main(){
+    vec2 st = position.xy;
+    vec3 color = vec3(0.);
+
+    // Center around origin for rotation
+    st.x -= 0.5;
+    st.y -= 0.5;
+    
+    // Apply rotation using rotspd parameter
+    float angle = rotspd * fTime;
+    float cosAngle = cos(angle);
+    float sinAngle = sin(angle);
+    
+    float rotatedX = st.x * cosAngle - st.y * sinAngle;
+    float rotatedY = st.x * sinAngle + st.y * cosAngle;
+    
+    st.x = rotatedX;
+    st.y = rotatedY;
+    
+    // Move back from origin
+    st.x += 0.5;
+    st.y += 0.5;
+    
+    // Apply scaling and translation
+    st.x *= zoomx;
+    st.y *= zoomy;
+    st.y -= y1;
+    st.x -= x1;
+    
+    color = texture(textureSampler, st).rgb;
+    outColor = color;
+}
