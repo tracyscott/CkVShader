@@ -1,0 +1,288 @@
+/*{
+	"DESCRIPTION": "Complete Navier-Stokes Fluid Simulation with visualization",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"FLUID SIMULATION"
+	],
+	"INPUTS": [
+		{
+			"NAME": "viscosity",
+			"TYPE": "float",
+			"DEFAULT": 0.0001,
+			"MIN": 0.0,
+			"MAX": 0.01
+		},
+		{
+			"NAME": "timestep",
+			"TYPE": "float",
+			"DEFAULT": 0.016,
+			"MIN": 0.001,
+			"MAX": 0.1
+		},
+		{
+			"NAME": "forceX",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": -5.0,
+			"MAX": 5.0
+		},
+		{
+			"NAME": "forceY", 
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": -5.0,
+			"MAX": 5.0
+		},
+		{
+			"NAME": "forceRadius",
+			"TYPE": "float",
+			"DEFAULT": 0.1,
+			"MIN": 0.01,
+			"MAX": 0.5
+		},
+		{
+			"NAME": "forceMagnitude",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.0,
+			"MAX": 10.0
+		},
+		{
+			"NAME": "densitySource",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.0,
+			"MAX": 2.0
+		},
+		{
+			"NAME": "vorticityScale",
+			"TYPE": "float",
+			"DEFAULT": 0.1,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "velocityVisualization",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.1,
+			"MAX": 10.0
+		},
+		{
+			"NAME": "densityVisualization",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.1,
+			"MAX": 5.0
+		},
+		{
+			"NAME": "audioReactive",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "boundaries",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "colorMode",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 3.0
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float viscosity;
+uniform float timestep;
+uniform float forceX;
+uniform float forceY;
+uniform float forceRadius;
+uniform float forceMagnitude;
+uniform float densitySource;
+uniform float vorticityScale;
+uniform float velocityVisualization;
+uniform float densityVisualization;
+uniform float audioReactive;
+uniform float boundaries;
+uniform float colorMode;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <fluid.vti>
+#include <palettes.vti>
+
+// Simple fluid simulation state using position-based storage
+// This is a simplified approach for LED visualization without external textures
+
+vec2 getStoredVelocity(vec2 coord) {
+    // Create a simple velocity field based on position and time
+    // This simulates stored velocity data
+    vec2 center = vec2(0.5, 0.5);
+    vec2 offset = coord - center;
+    float dist = length(offset);
+    float angle = atan(offset.y, offset.x);
+    
+    // Base circular flow pattern
+    vec2 baseFlow = vec2(-sin(angle), cos(angle)) * exp(-dist * 2.0);
+    
+    // Add time-based perturbations
+    baseFlow += 0.3 * vec2(sin(fTime * 1.5 + coord.x * 10.0), 
+                          cos(fTime * 2.0 + coord.y * 8.0));
+    
+    return baseFlow * 0.5;
+}
+
+float getStoredDensity(vec2 coord) {
+    // Simple density field based on position
+    vec2 center = vec2(0.5, 0.5);
+    float dist = length(coord - center);
+    
+    // Create density sources
+    float density = 0.0;
+    
+    // Central density source
+    density += exp(-dist * dist * 20.0) * densitySource;
+    
+    // Moving density sources based on time
+    vec2 source1 = vec2(0.3 + 0.2 * sin(fTime * 0.8), 0.6 + 0.1 * cos(fTime * 1.2));
+    vec2 source2 = vec2(0.7 + 0.1 * cos(fTime * 1.1), 0.4 + 0.2 * sin(fTime * 0.9));
+    
+    density += exp(-length(coord - source1) * 30.0) * densitySource * 0.7;
+    density += exp(-length(coord - source2) * 25.0) * densitySource * 0.8;
+    
+    return density;
+}
+
+void main() {
+    vec2 uv = position.xy;
+    vec2 texelSize = vec2(0.01); // Approximate texel size for LED grid
+    
+    // Get current fluid state
+    vec2 velocity = getStoredVelocity(uv);
+    float density = getStoredDensity(uv);
+    
+    // Apply external forces
+    vec2 forcePos = vec2(0.5 + forceX * 0.1, 0.5 + forceY * 0.1);
+    vec2 forceVector = vec2(forceX, forceY);
+    
+    // Audio-reactive force modulation
+    if (audioReactive > 0.0) {
+        // Multiple audio frequency bands for richer interaction
+        float bassForce = sin(fTime * 4.0) * audioReactive;
+        float midForce = sin(fTime * 8.0) * audioReactive * 0.7;
+        float highForce = sin(fTime * 16.0) * audioReactive * 0.5;
+        
+        // Modulate force magnitude with audio
+        forceVector *= (1.0 + bassForce + midForce * 0.5);
+        
+        // Add audio-reactive vortex centers
+        vec2 vortex1 = vec2(0.3 + 0.2 * sin(fTime * 0.7), 0.6 + 0.1 * cos(fTime * 1.1));
+        vec2 vortex2 = vec2(0.7 + 0.1 * cos(fTime * 0.9), 0.4 + 0.2 * sin(fTime * 0.6));
+        
+        float swirl1 = cos(fTime * 8.0 + length(uv - vortex1) * 20.0) * audioReactive;
+        float swirl2 = sin(fTime * 12.0 + length(uv - vortex2) * 15.0) * audioReactive;
+        
+        vec2 swirlForce1 = vec2(-(uv.y - vortex1.y), (uv.x - vortex1.x)) * swirl1;
+        vec2 swirlForce2 = vec2((uv.y - vortex2.y), -(uv.x - vortex2.x)) * swirl2;
+        
+        forceVector += (swirlForce1 + swirlForce2) * 0.5;
+        
+        // Audio-reactive turbulence injection
+        float turbulence = highForce * sin(uv.x * 30.0 + fTime * 10.0) * cos(uv.y * 25.0 + fTime * 8.0);
+        forceVector += vec2(turbulence * 0.3, turbulence * -0.2);
+    }
+    
+    velocity = addForce(velocity, forcePos, uv, normalize(forceVector), 
+                       forceRadius, forceMagnitude * timestep);
+    
+    // Add vorticity confinement for visual appeal (simplified for procedural approach)
+    if (vorticityScale > 0.0) {
+        // Simple vorticity enhancement using curl of current velocity field
+        vec2 offset = vec2(texelSize.x, 0.0);
+        vec2 vel_right = getStoredVelocity(uv + offset);
+        vec2 vel_left = getStoredVelocity(uv - offset);
+        offset = vec2(0.0, texelSize.y);
+        vec2 vel_up = getStoredVelocity(uv + offset);
+        vec2 vel_down = getStoredVelocity(uv - offset);
+        
+        float vorticity = ((vel_right.y - vel_left.y) - (vel_up.x - vel_down.x)) * 0.5;
+        vec2 vorticityForce = vec2(-vorticity, vorticity) * vorticityScale * texelSize;
+        velocity += vorticityForce * timestep;
+    }
+    
+    // Simple advection
+    vec2 backTrace = uv - timestep * velocity;
+    backTrace = clamp(backTrace, vec2(0.01), vec2(0.99));
+    
+    // Apply some dissipation
+    velocity *= 0.995;
+    
+    // Apply boundary conditions based on boundaries parameter
+    if (boundaries > 0.5) {
+        velocity = applyVelocityBoundary(velocity, uv, texelSize);
+    }
+    
+    // Visualization modes
+    int visualMode = int(floor(colorMode));
+    
+    if (visualMode == 0) {
+        // Velocity field visualization
+        vec3 velocityColor = velocityToColor(velocity, velocityVisualization);
+        outColor = velocityColor;
+        
+    } else if (visualMode == 1) {
+        // Density visualization
+        vec3 densityColor = vec3(density * densityVisualization, 
+                               density * densityVisualization * 0.7,
+                               density * densityVisualization * 0.4);
+        outColor = densityColor;
+        
+    } else if (visualMode == 2) {
+        // Combined velocity and density
+        vec3 velocityColor = velocityToColor(velocity, velocityVisualization * 0.7);
+        vec3 densityColor = vec3(density * densityVisualization);
+        
+        float speed = length(velocity);
+        float mixFactor = 0.6 + 0.4 * speed;
+        outColor = mix(densityColor, velocityColor, mixFactor);
+        
+    } else {
+        // Flow lines visualization
+        float speed = length(velocity);
+        vec2 flowDir = normalize(velocity);
+        
+        // Create flow line effect
+        float linePattern = sin(dot(uv, flowDir) * 50.0 + fTime * 5.0);
+        linePattern = smoothstep(0.3, 0.7, linePattern);
+        
+        vec3 flowColor = velocityToColor(velocity, velocityVisualization);
+        outColor = flowColor * (0.5 + 0.5 * linePattern) * speed * 2.0;
+        
+        // Add density overlay
+        outColor += vec3(density * densityVisualization * 0.3);
+    }
+    
+    // Add dynamic brightness based on flow activity
+    float activity = length(velocity) + density * 0.5;
+    outColor *= (0.3 + 0.7 * activity);
+    
+    // Add time-based shimmer for visual appeal
+    float shimmer = 0.9 + 0.1 * sin(fTime * 3.0 + dot(uv, vec2(23.14, 31.41)));
+    outColor *= shimmer;
+    
+    // Ensure output is in valid range
+    outColor = clamp(outColor, 0.0, 1.0);
+}

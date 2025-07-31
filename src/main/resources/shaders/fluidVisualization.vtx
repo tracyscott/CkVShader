@@ -1,0 +1,315 @@
+/*{
+	"DESCRIPTION": "Fluid Visualization - Multiple rendering modes for Navier-Stokes simulation",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"FLUID VISUALIZATION"
+	],
+	"INPUTS": [
+		{
+			"NAME": "visualizationMode",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 5.0
+		},
+		{
+			"NAME": "velocityScale",
+			"TYPE": "float",
+			"DEFAULT": 5.0,
+			"MIN": 0.1,
+			"MAX": 20.0
+		},
+		{
+			"NAME": "densityScale",
+			"TYPE": "float",
+			"DEFAULT": 2.0,
+			"MIN": 0.1,
+			"MAX": 10.0
+		},
+		{
+			"NAME": "pressureScale",
+			"TYPE": "float",
+			"DEFAULT": 10.0,
+			"MIN": 0.1,
+			"MAX": 50.0
+		},
+		{
+			"NAME": "streamlineLength",
+			"TYPE": "float",
+			"DEFAULT": 8.0,
+			"MIN": 2.0,
+			"MAX": 20.0
+		},
+		{
+			"NAME": "particleTrails",
+			"TYPE": "float",
+			"DEFAULT": 0.5,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "colorSaturation",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.0,
+			"MAX": 2.0
+		},
+		{
+			"NAME": "backgroundBrightness",
+			"TYPE": "float",
+			"DEFAULT": 0.1,
+			"MIN": 0.0,
+			"MAX": 0.5
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float visualizationMode;
+uniform float velocityScale;
+uniform float densityScale;
+uniform float pressureScale;
+uniform float streamlineLength;
+uniform float particleTrails;
+uniform float colorSaturation;
+uniform float backgroundBrightness;
+
+// Texture uniforms for fluid state (would be provided by multi-pass system)
+uniform sampler2D velocityTexture;
+uniform sampler2D densityTexture;
+uniform sampler2D pressureTexture;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <fluid.vti>
+#include <palettes.vti>
+
+// Enhanced visualization functions
+
+// Create particle trail effect by sampling along streamlines
+vec3 renderParticleTrails(vec2 uv, vec2 texelSize) {
+    vec3 color = vec3(0.0);
+    vec2 currentPos = uv;
+    float totalIntensity = 0.0;
+    
+    // Trace streamline backwards
+    for (int i = 0; i < int(streamlineLength); i++) {
+        vec2 velocity = sampleVelocityField(velocityTexture, currentPos);
+        float density = sampleDensityField(densityTexture, currentPos);
+        
+        // Accumulate density along trail
+        float weight = exp(-float(i) * 0.2) * particleTrails;
+        totalIntensity += density * weight;
+        
+        // Step backwards along velocity field
+        currentPos -= velocity * texelSize * 0.5;
+        
+        // Clamp to bounds
+        if (currentPos.x < 0.0 || currentPos.x > 1.0 || 
+            currentPos.y < 0.0 || currentPos.y > 1.0) break;
+    }
+    
+    // Convert accumulated intensity to color
+    color = vec3(totalIntensity * densityScale * 0.3);
+    return color;
+}
+
+// Render velocity field as colored arrows/flow lines
+vec3 renderVelocityField(vec2 uv, vec2 texelSize) {
+    vec2 velocity = sampleVelocityField(velocityTexture, uv);
+    float speed = length(velocity);
+    
+    if (speed < 0.001) return vec3(backgroundBrightness);
+    
+    vec2 normalizedVel = normalize(velocity);
+    
+    // Create arrow pattern
+    vec2 arrowCoord = uv * 50.0; // Scale for arrow grid
+    vec2 cellCenter = floor(arrowCoord) + 0.5;
+    vec2 localCoord = arrowCoord - cellCenter;
+    
+    // Sample velocity at cell center
+    vec2 cellUV = cellCenter / 50.0;
+    vec2 cellVelocity = sampleVelocityField(velocityTexture, cellUV);
+    float cellSpeed = length(cellVelocity);
+    
+    if (cellSpeed < 0.01) return vec3(backgroundBrightness);
+    
+    vec2 cellDirection = normalize(cellVelocity);
+    
+    // Rotate local coordinates to align with flow direction
+    float angle = atan(cellDirection.y, cellDirection.x);
+    float cosA = cos(angle);
+    float sinA = sin(angle);
+    vec2 rotatedCoord = vec2(
+        localCoord.x * cosA + localCoord.y * sinA,
+        -localCoord.x * sinA + localCoord.y * cosA
+    );
+    
+    // Create arrow shape
+    float arrowBody = step(abs(rotatedCoord.y), 0.1) * step(rotatedCoord.x, 0.3) * step(-0.3, rotatedCoord.x);
+    float arrowHead = step(abs(rotatedCoord.y - rotatedCoord.x * 0.5), 0.05) * step(rotatedCoord.x, 0.3) * step(0.1, rotatedCoord.x) +
+                     step(abs(rotatedCoord.y + rotatedCoord.x * 0.5), 0.05) * step(rotatedCoord.x, 0.3) * step(0.1, rotatedCoord.x);
+    
+    float arrowMask = max(arrowBody, arrowHead);
+    
+    // Color based on velocity magnitude
+    vec3 velocityColor = velocityToColor(cellVelocity, velocityScale);
+    return mix(vec3(backgroundBrightness), velocityColor, arrowMask * cellSpeed * 2.0);
+}
+
+// Render streamlines as flowing curves
+vec3 renderStreamlines(vec2 uv, vec2 texelSize) {
+    vec3 color = vec3(backgroundBrightness);
+    
+    // Create streamline seeds on a grid
+    vec2 gridCoord = uv * 20.0;
+    vec2 seedPos = floor(gridCoord) / 20.0 + 0.025;
+    
+    float minDist = 1000.0;
+    vec3 streamlineColor = vec3(0.0);
+    
+    // Check multiple nearby seed points
+    for (int sx = -1; sx <= 1; sx++) {
+        for (int sy = -1; sy <= 1; sy++) {
+            vec2 currentSeed = seedPos + vec2(float(sx), float(sy)) / 20.0;
+            if (currentSeed.x < 0.0 || currentSeed.x > 1.0 || 
+                currentSeed.y < 0.0 || currentSeed.y > 1.0) continue;
+            
+            vec2 currentPos = currentSeed;
+            
+            // Trace streamline from seed
+            for (int i = 0; i < int(streamlineLength * 2.0); i++) {
+                vec2 velocity = sampleVelocityField(velocityTexture, currentPos);
+                float speed = length(velocity);
+                
+                if (speed < 0.001) break;
+                
+                float distToPoint = length(currentPos - uv);
+                
+                if (distToPoint < minDist) {
+                    minDist = distToPoint;
+                    // Color based on position along streamline and flow speed
+                    float linePosition = float(i) / streamlineLength;
+                    vec3 flowColor = velocityToColor(velocity, velocityScale);
+                    streamlineColor = flowColor * (1.0 - linePosition * 0.5);
+                }
+                
+                // Advance along velocity field
+                currentPos += normalize(velocity) * texelSize * 2.0;
+                
+                if (currentPos.x < 0.0 || currentPos.x > 1.0 || 
+                    currentPos.y < 0.0 || currentPos.y > 1.0) break;
+            }
+        }
+    }
+    
+    // Create smooth streamline visualization
+    float lineWidth = 0.01;
+    float lineIntensity = exp(-minDist / lineWidth);
+    
+    return mix(color, streamlineColor, lineIntensity);
+}
+
+// Render pressure field as heatmap
+vec3 renderPressureField(vec2 uv, vec2 texelSize) {
+    float pressure = samplePressureField(pressureTexture, uv);
+    
+    // Create pressure heatmap
+    vec3 pressureColor = pressureToColor(pressure, pressureScale);
+    
+    // Add contour lines for pressure visualization
+    float contourSpacing = 0.1;
+    float contourLevel = floor(pressure * pressureScale / contourSpacing) * contourSpacing;
+    float contourDistance = abs(pressure * pressureScale - contourLevel);
+    float contourLine = exp(-contourDistance * 100.0);
+    
+    pressureColor = mix(pressureColor, vec3(1.0), contourLine * 0.3);
+    
+    return pressureColor;
+}
+
+// Combined density and velocity visualization
+vec3 renderDensityVelocity(vec2 uv, vec2 texelSize) {
+    float density = sampleDensityField(densityTexture, uv);
+    vec2 velocity = sampleVelocityField(velocityTexture, uv);
+    
+    // Density as base color
+    vec3 densityColor = vec3(density * densityScale, density * densityScale * 0.7, density * densityScale * 0.4);
+    
+    // Velocity as color modulation
+    vec3 velocityColor = velocityToColor(velocity, velocityScale * 0.5);
+    
+    // Mix based on local flow intensity
+    float flowIntensity = length(velocity);
+    float mixFactor = smoothstep(0.0, 0.5, flowIntensity);
+    
+    return mix(densityColor, velocityColor * density, mixFactor);
+}
+
+// Vorticity visualization
+vec3 renderVorticity(vec2 uv, vec2 texelSize) {
+    // Calculate vorticity (curl of velocity field)
+    vec2 vLeft = sampleVelocityField(velocityTexture, uv - vec2(texelSize.x, 0.0));
+    vec2 vRight = sampleVelocityField(velocityTexture, uv + vec2(texelSize.x, 0.0));
+    vec2 vDown = sampleVelocityField(velocityTexture, uv - vec2(0.0, texelSize.y));
+    vec2 vUp = sampleVelocityField(velocityTexture, uv + vec2(0.0, texelSize.y));
+    
+    float vorticity = ((vRight.y - vLeft.y) - (vUp.x - vDown.x)) * 0.5;
+    
+    // Color positive and negative vorticity differently
+    vec3 vorticityColor;
+    if (vorticity > 0.0) {
+        vorticityColor = vec3(vorticity * velocityScale, 0.0, 0.0); // Red for positive
+    } else {
+        vorticityColor = vec3(0.0, 0.0, -vorticity * velocityScale); // Blue for negative
+    }
+    
+    return vorticityColor + vec3(backgroundBrightness);
+}
+
+void main() {
+    vec2 uv = position.xy;
+    vec2 texelSize = vec2(1.0) / vec2(256.0); // Assume 256x256 fluid texture
+    
+    int mode = int(floor(visualizationMode));
+    vec3 color = vec3(0.0);
+    
+    if (mode == 0) {
+        // Velocity field arrows
+        color = renderVelocityField(uv, texelSize);
+        
+    } else if (mode == 1) {
+        // Particle trails
+        color = renderParticleTrails(uv, texelSize);
+        
+    } else if (mode == 2) {
+        // Streamlines
+        color = renderStreamlines(uv, texelSize);
+        
+    } else if (mode == 3) {
+        // Combined density and velocity
+        color = renderDensityVelocity(uv, texelSize);
+        
+    } else if (mode == 4) {
+        // Pressure field heatmap
+        color = renderPressureField(uv, texelSize);
+        
+    } else {
+        // Vorticity visualization
+        color = renderVorticity(uv, texelSize);
+    }
+    
+    // Apply color saturation and final adjustments
+    color = mix(vec3(dot(color, vec3(0.299, 0.587, 0.114))), color, colorSaturation);
+    
+    // Add subtle time-based animation
+    color *= (0.95 + 0.05 * sin(fTime * 3.0 + length(uv) * 10.0));
+    
+    outColor = clamp(color, 0.0, 1.0);
+}

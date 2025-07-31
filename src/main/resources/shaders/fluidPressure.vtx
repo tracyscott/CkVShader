@@ -1,0 +1,102 @@
+/*{
+	"DESCRIPTION": "Fluid Pressure Projection - Incompressibility constraint for Navier-Stokes",
+	"CREDIT": "by tracyscott", 
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"FLUID SIMULATION"
+	],
+	"INPUTS": [
+		{
+			"NAME": "jacobiIterations",
+			"TYPE": "float",
+			"DEFAULT": 20.0,
+			"MIN": 1.0,
+			"MAX": 50.0
+		},
+		{
+			"NAME": "pressureAlpha",
+			"TYPE": "float",
+			"DEFAULT": -1.0,
+			"MIN": -2.0,
+			"MAX": 0.0
+		},
+		{
+			"NAME": "pressureBeta",
+			"TYPE": "float",
+			"DEFAULT": 0.25,
+			"MIN": 0.1,
+			"MAX": 0.5
+		},
+		{
+			"NAME": "mode",
+			"TYPE": "float", 
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 2.0
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float jacobiIterations;
+uniform float pressureAlpha;
+uniform float pressureBeta;
+uniform float mode;
+
+// Texture uniforms for fluid state
+uniform sampler2D velocityTexture;    // Current velocity field
+uniform sampler2D pressureTexture;    // Current pressure field
+uniform sampler2D divergenceTexture;  // Velocity divergence field
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <fluid.vti>
+#include <palettes.vti>
+
+void main() {
+    vec2 uv = position.xy;
+    vec2 texelSize = vec2(1.0) / textureSize(velocityTexture, 0);
+    
+    int pressureMode = int(floor(mode));
+    
+    if (pressureMode == 0) {
+        // Compute velocity divergence for pressure solve
+        float divergence = divergenceVelocity(velocityTexture, uv, texelSize);
+        
+        // Store divergence in R channel
+        outColor = vec3(divergence, 0.0, 0.0);
+        
+    } else if (pressureMode == 1) {
+        // Perform Jacobi iteration for pressure solve
+        // Solve Poisson equation: ∇²p = -∇·v
+        float newPressure = jacobiPressure(pressureTexture, divergenceTexture, uv, texelSize, 
+                                         pressureAlpha, 1.0 / pressureBeta);
+        
+        // Apply pressure boundary conditions
+        newPressure = applyPressureBoundary(newPressure, uv, texelSize);
+        
+        // Output pressure in R channel
+        outColor = vec3(newPressure, 0.0, 0.0);
+        
+    } else {
+        // Pressure projection - subtract pressure gradient from velocity
+        vec2 velocity = sampleVelocityField(velocityTexture, uv);
+        vec2 pressureGrad = gradientPressure(pressureTexture, uv, texelSize);
+        
+        // Apply pressure gradient to make velocity field divergence-free
+        vec2 newVelocity = velocity - pressureGrad;
+        
+        // Apply velocity boundary conditions
+        newVelocity = applyVelocityBoundary(newVelocity, uv, texelSize);
+        
+        // Output corrected velocity
+        outColor = vec3(newVelocity, 0.0);
+    }
+    
+    // Ensure output is in valid range
+    outColor = clamp(outColor, -10.0, 10.0);
+}

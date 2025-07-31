@@ -1,0 +1,113 @@
+/*{
+	"DESCRIPTION": "Fluid Advection - Semi-Lagrangian advection for Navier-Stokes",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"FLUID SIMULATION"
+	],
+	"INPUTS": [
+		{
+			"NAME": "timestep",
+			"TYPE": "float", 
+			"DEFAULT": 0.016,
+			"MIN": 0.001,
+			"MAX": 0.1
+		},
+		{
+			"NAME": "dissipation",
+			"TYPE": "float",
+			"DEFAULT": 0.999,
+			"MIN": 0.9,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "velocityScale",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.1,
+			"MAX": 10.0
+		},
+		{
+			"NAME": "mode",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 2.0
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float timestep;
+uniform float dissipation;
+uniform float velocityScale;
+uniform float mode;
+
+// Texture uniforms for fluid state
+uniform sampler2D velocityTexture;  // Current velocity field (RG = velocity XY)
+uniform sampler2D densityTexture;   // Current density field (R = density)
+uniform sampler2D pressureTexture;  // Current pressure field (R = pressure)
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <fluid.vti>
+#include <palettes.vti>
+
+void main() {
+    vec2 uv = position.xy;
+    vec2 texelSize = vec2(1.0) / textureSize(velocityTexture, 0);
+    
+    // Determine which field to advect based on mode
+    int advectionMode = int(floor(mode));
+    
+    if (advectionMode == 0) {
+        // Advect velocity field
+        vec2 newVelocity = advectVelocity(velocityTexture, uv, timestep * velocityScale, texelSize);
+        
+        // Apply boundary conditions
+        newVelocity = applyVelocityBoundary(newVelocity, uv, texelSize);
+        
+        // Apply dissipation to gradually reduce energy
+        newVelocity *= dissipation;
+        
+        // Output velocity as RG channels, zero in B
+        outColor = vec3(newVelocity, 0.0);
+        
+    } else if (advectionMode == 1) {
+        // Advect density field
+        float newDensity = advectDensity(densityTexture, velocityTexture, uv, timestep * velocityScale, texelSize);
+        
+        // Apply density dissipation
+        newDensity *= dissipation;
+        
+        // Output density in R channel
+        outColor = vec3(newDensity, 0.0, 0.0);
+        
+    } else {
+        // Visualization mode - convert velocity to color for LED output
+        vec2 velocity = sampleVelocityField(velocityTexture, uv);
+        float density = sampleDensityField(densityTexture, uv);
+        
+        // Combine velocity visualization with density
+        vec3 velocityColor = velocityToColor(velocity, velocityScale * 10.0);
+        vec3 densityColor = vec3(density, density * 0.5, density * 0.8);
+        
+        // Mix velocity and density visualization
+        float mixFactor = 0.7;
+        outColor = mix(velocityColor, densityColor, mixFactor);
+        
+        // Add some dynamic brightness based on flow speed
+        float speed = length(velocity);
+        outColor *= (0.5 + 0.5 * speed * velocityScale);
+        
+        // Apply time-based color cycling for visual appeal
+        outColor *= (0.8 + 0.2 * sin(fTime * 2.0 + length(uv) * 5.0));
+    }
+    
+    // Ensure output is in valid range
+    outColor = clamp(outColor, 0.0, 1.0);
+}

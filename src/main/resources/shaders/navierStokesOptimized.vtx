@@ -1,0 +1,354 @@
+/*{
+	"DESCRIPTION": "Optimized Navier-Stokes Fluid Simulation for LED installations",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"FLUID SIMULATION", "OPTIMIZED"
+	],
+	"INPUTS": [
+		{
+			"NAME": "viscosity",
+			"TYPE": "float",
+			"DEFAULT": 0.0001,
+			"MIN": 0.0,
+			"MAX": 0.01
+		},
+		{
+			"NAME": "timestep",
+			"TYPE": "float",
+			"DEFAULT": 0.016,
+			"MIN": 0.001,
+			"MAX": 0.05
+		},
+		{
+			"NAME": "forceX",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": -3.0,
+			"MAX": 3.0
+		},
+		{
+			"NAME": "forceY", 
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": -3.0,
+			"MAX": 3.0
+		},
+		{
+			"NAME": "forceRadius",
+			"TYPE": "float",
+			"DEFAULT": 0.15,
+			"MIN": 0.05,
+			"MAX": 0.4
+		},
+		{
+			"NAME": "forceMagnitude",
+			"TYPE": "float",
+			"DEFAULT": 2.0,
+			"MIN": 0.0,
+			"MAX": 8.0
+		},
+		{
+			"NAME": "audioReactive",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "boundaries",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "colorMode",
+			"TYPE": "float",
+			"DEFAULT": 0.0,
+			"MIN": 0.0,
+			"MAX": 4.0
+		},
+		{
+			"NAME": "brightness",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.1,
+			"MAX": 3.0
+		},
+		{
+			"NAME": "contrast",
+			"TYPE": "float",
+			"DEFAULT": 1.0,
+			"MIN": 0.5,
+			"MAX": 2.0
+		},
+		{
+			"NAME": "fadeRate",
+			"TYPE": "float",
+			"DEFAULT": 0.99,
+			"MIN": 0.9,
+			"MAX": 1.0
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float viscosity;
+uniform float timestep;
+uniform float forceX;
+uniform float forceY;
+uniform float forceRadius;
+uniform float forceMagnitude;
+uniform float audioReactive;
+uniform float boundaries;
+uniform float colorMode;
+uniform float brightness;
+uniform float contrast;
+uniform float fadeRate;
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <palettes.vti>
+
+// Optimized fluid simulation using procedural field generation
+// This approach is more suitable for LED installations where we don't need
+// full computational fluid dynamics accuracy but want visually appealing results
+
+// Fast pseudo-random function for turbulence
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Optimized noise function
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f); // Smooth interpolation
+    
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Fast fractal noise for turbulence
+float fbm(vec2 p, int octaves) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    
+    for (int i = 0; i < octaves; i++) {
+        value += amplitude * noise(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    return value;
+}
+
+// Optimized velocity field generation
+vec2 getFluidVelocity(vec2 coord, float time) {
+    // Base flow patterns
+    vec2 velocity = vec2(0.0);
+    
+    // Primary circular flow
+    vec2 center1 = vec2(0.3 + 0.1 * sin(time * 0.7), 0.6 + 0.05 * cos(time * 1.1));
+    vec2 offset1 = coord - center1;
+    float dist1 = length(offset1);
+    if (dist1 > 0.001) {
+        float strength1 = exp(-dist1 * 3.0) * 0.8;
+        velocity += vec2(-offset1.y, offset1.x) * strength1;
+    }
+    
+    // Secondary counter flow
+    vec2 center2 = vec2(0.7 + 0.05 * cos(time * 0.9), 0.4 + 0.1 * sin(time * 0.6));
+    vec2 offset2 = coord - center2;
+    float dist2 = length(offset2);
+    if (dist2 > 0.001) {
+        float strength2 = exp(-dist2 * 4.0) * 0.6;
+        velocity += vec2(offset2.y, -offset2.x) * strength2;
+    }
+    
+    // Turbulence overlay
+    float turbScale = 8.0;
+    vec2 turbulence = vec2(
+        fbm(coord * turbScale + time * 0.5, 2) - 0.5,
+        fbm(coord * turbScale + vec2(100.0) + time * 0.4, 2) - 0.5
+    ) * 0.3;
+    
+    velocity += turbulence;
+    
+    // External force injection
+    if (length(vec2(forceX, forceY)) > 0.01) {
+        vec2 forceCenter = vec2(0.5 + forceX * 0.1, 0.5 + forceY * 0.1);
+        vec2 forceOffset = coord - forceCenter;
+        float forceDist = length(forceOffset);
+        
+        if (forceDist < forceRadius) {
+            float falloff = 1.0 - (forceDist / forceRadius);
+            falloff = falloff * falloff; // Quadratic falloff
+            vec2 forceDir = normalize(vec2(forceX, forceY));
+            velocity += forceDir * forceMagnitude * falloff * 0.1;
+        }
+    }
+    
+    return velocity;
+}
+
+// Optimized density field with moving sources
+float getFluidDensity(vec2 coord, float time) {
+    float density = 0.0;
+    
+    // Moving density sources
+    vec2 source1 = vec2(0.2 + 0.15 * sin(time * 0.8), 0.3 + 0.1 * cos(time * 1.2));
+    vec2 source2 = vec2(0.8 + 0.1 * cos(time * 0.9), 0.7 + 0.12 * sin(time * 0.7));
+    vec2 source3 = vec2(0.5 + 0.2 * sin(time * 0.5), 0.5 + 0.15 * cos(time * 0.6));
+    
+    density += exp(-length(coord - source1) * 15.0) * 0.8;
+    density += exp(-length(coord - source2) * 12.0) * 0.9;
+    density += exp(-length(coord - source3) * 18.0) * 0.7;
+    
+    // Add noise-based density variation
+    float noiseContrib = fbm(coord * 6.0 + time * 0.3, 2) * 0.2;
+    density += max(0.0, noiseContrib - 0.1);
+    
+    return density;
+}
+
+// Fast advection simulation
+vec2 advectPosition(vec2 coord, float dt) {
+    vec2 velocity = getFluidVelocity(coord, fTime);
+    vec2 newPos = coord + velocity * dt;
+    
+    // Boundary handling
+    if (boundaries > 0.5) {
+        newPos = clamp(newPos, vec2(0.01), vec2(0.99));
+    } else {
+        // Wrap around for infinite domain
+        newPos = fract(newPos);
+    }
+    
+    return newPos;
+}
+
+// Enhanced color mapping for LEDs
+vec3 mapToLEDColor(vec2 velocity, float density, float pressure, int mode) {
+    vec3 color = vec3(0.0);
+    
+    if (mode == 0) {
+        // Velocity-based coloring with enhanced saturation
+        float speed = length(velocity);
+        float angle = atan(velocity.y, velocity.x) / (2.0 * PI) + 0.5;
+        
+        // HSV to RGB with enhanced saturation for LEDs
+        vec3 hsv = vec3(angle, min(1.0, speed * 3.0), speed * 2.0);
+        color = hsv2rgb(hsv);
+        
+    } else if (mode == 1) {
+        // Density-based warm colors
+        color = vec3(density * 1.5, density * 1.2, density * 0.8);
+        
+    } else if (mode == 2) {
+        // Combined velocity and density
+        vec3 velColor = mapToLEDColor(velocity, 0.0, 0.0, 0);
+        vec3 densColor = vec3(density * 1.2, density * 0.9, density * 0.6);
+        float mixFactor = 0.7 + 0.3 * length(velocity);
+        color = mix(densColor, velColor, mixFactor);
+        
+    } else if (mode == 3) {
+        // Flow-based palette selection
+        float flowMagnitude = length(velocity) + density * 0.5;
+        color = paletteN(flowMagnitude * 3.0 + fTime * 0.5, floor(flowMagnitude * 5.0));
+        
+    } else {
+        // Artistic mode with time-based color cycling
+        float phase = fTime * 0.8 + length(velocity) * 10.0 + density * 5.0;
+        color = vec3(
+            0.5 + 0.5 * sin(phase),
+            0.5 + 0.5 * sin(phase + PI * 2.0 / 3.0),
+            0.5 + 0.5 * sin(phase + PI * 4.0 / 3.0)
+        );
+    }
+    
+    return color;
+}
+
+// HSV to RGB conversion optimized for LEDs
+vec3 hsv2rgb(vec3 hsv) {
+    vec3 rgb = clamp(abs(mod(hsv.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    return hsv.z * mix(vec3(1.0), rgb, hsv.y);
+}
+
+void main() {
+    vec2 uv = position.xy;
+    
+    // Get current fluid state
+    vec2 velocity = getFluidVelocity(uv, fTime);
+    float density = getFluidDensity(uv, fTime);
+    
+    // Audio-reactive modulation
+    if (audioReactive > 0.0) {
+        // Simulate audio-reactive forces
+        float bassFreq = sin(fTime * 4.0) * audioReactive;
+        float midFreq = sin(fTime * 8.0) * audioReactive * 0.8;
+        float highFreq = sin(fTime * 16.0) * audioReactive * 0.6;
+        
+        // Modulate velocity with audio
+        velocity *= (1.0 + bassFreq * 0.5);
+        
+        // Add audio-reactive vortices
+        vec2 audioVortex1 = vec2(0.25 + bassFreq * 0.1, 0.75 + midFreq * 0.1);
+        vec2 audioVortex2 = vec2(0.75 + midFreq * 0.1, 0.25 + highFreq * 0.1);
+        
+        vec2 offset1 = uv - audioVortex1;
+        vec2 offset2 = uv - audioVortex2;
+        
+        if (length(offset1) < 0.3) {
+            velocity += vec2(-offset1.y, offset1.x) * bassFreq * 0.5;
+        }
+        if (length(offset2) < 0.2) {
+            velocity += vec2(offset2.y, -offset2.x) * (midFreq + highFreq) * 0.3;
+        }
+        
+        // Audio-reactive density injection
+        density += (bassFreq + midFreq) * 0.3 * exp(-length(uv - vec2(0.5)) * 8.0);
+    }
+    
+    // Simple advection for LED-optimized simulation
+    vec2 advectedPos = advectPosition(uv, timestep * 0.5);
+    vec2 advectedVel = getFluidVelocity(advectedPos, fTime - timestep);
+    float advectedDensity = getFluidDensity(advectedPos, fTime - timestep * 0.5);
+    
+    // Mix current and advected states
+    velocity = mix(velocity, advectedVel, 0.8) * fadeRate;
+    density = mix(density, advectedDensity, 0.7) * fadeRate;
+    
+    // Apply viscosity (simplified)
+    velocity *= (1.0 - viscosity * 100.0);
+    
+    // Generate final color
+    int mode = int(floor(colorMode));
+    vec3 color = mapToLEDColor(velocity, density, 0.0, mode);
+    
+    // LED-specific post-processing
+    color *= brightness;
+    color = pow(color, vec3(1.0 / contrast)); // Gamma adjustment
+    
+    // Add subtle sparkle effect for visual interest
+    float sparkle = hash(uv + fTime * 0.1);
+    if (sparkle > 0.98) {
+        color += vec3(0.2) * (sparkle - 0.98) * 50.0;
+    }
+    
+    // Ensure minimum brightness for LED visibility
+    color = max(color, vec3(0.01));
+    
+    outColor = clamp(color, 0.0, 1.0);
+}

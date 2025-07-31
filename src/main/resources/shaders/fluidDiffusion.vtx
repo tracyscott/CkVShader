@@ -1,0 +1,88 @@
+/*{
+	"DESCRIPTION": "Fluid Viscosity Diffusion - Viscous forces for Navier-Stokes",
+	"CREDIT": "by tracyscott",
+	"ISFVSN": "2.0", 
+	"CATEGORIES": [
+		"FLUID SIMULATION"
+	],
+	"INPUTS": [
+		{
+			"NAME": "viscosity",
+			"TYPE": "float",
+			"DEFAULT": 0.0001,
+			"MIN": 0.0,
+			"MAX": 0.01
+		},
+		{
+			"NAME": "timestep",
+			"TYPE": "float",
+			"DEFAULT": 0.016,
+			"MIN": 0.001,
+			"MAX": 0.1
+		},
+		{
+			"NAME": "diffusionAlpha",
+			"TYPE": "float", 
+			"DEFAULT": 1.0,
+			"MIN": 0.1,
+			"MAX": 10.0
+		},
+		{
+			"NAME": "diffusionBeta",
+			"TYPE": "float",
+			"DEFAULT": 0.25,
+			"MIN": 0.1,
+			"MAX": 0.5
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float viscosity;
+uniform float timestep;
+uniform float diffusionAlpha;
+uniform float diffusionBeta;
+
+// Texture uniforms for fluid state
+uniform sampler2D velocityTexture;         // Current velocity field
+uniform sampler2D originalVelocityTexture; // Original velocity field (before diffusion)
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <consts.vti>
+#include <fluid.vti>
+#include <palettes.vti>
+
+void main() {
+    vec2 uv = position.xy;
+    vec2 texelSize = vec2(1.0) / textureSize(velocityTexture, 0);
+    
+    // Calculate diffusion parameters for Jacobi iteration
+    // For viscosity diffusion: solve (I - ν*dt*∇²)v = v₀
+    float alpha = timestep * viscosity / (texelSize.x * texelSize.x);
+    float inverseBeta = 1.0 / (1.0 + 4.0 * alpha);
+    
+    // Use provided parameters if they override defaults
+    if (diffusionAlpha > 0.1) {
+        alpha = diffusionAlpha;
+    }
+    if (diffusionBeta > 0.1) {
+        inverseBeta = diffusionBeta;
+    }
+    
+    // Perform Jacobi iteration for viscosity diffusion
+    vec2 newVelocity = jacobiVelocity(velocityTexture, originalVelocityTexture, 
+                                     uv, texelSize, alpha, inverseBeta);
+    
+    // Apply boundary conditions
+    newVelocity = applyVelocityBoundary(newVelocity, uv, texelSize);
+    
+    // Output diffused velocity
+    outColor = vec3(newVelocity, 0.0);
+    
+    // Ensure output is in valid range
+    outColor = clamp(outColor, -10.0, 10.0);
+}
