@@ -1,26 +1,27 @@
 package xyz.theforks.ckvshader.patterns;
 
-import heronarts.glx.GLX;
-import heronarts.glx.ui.UI2dComponent;
-import heronarts.glx.ui.vg.VGraphics;
-import heronarts.lx.model.LXPoint;
 import xyz.theforks.ckvshader.util.GLUtil;
 import xyz.theforks.ckvshader.util.ShaderCache;
-import xyz.theforks.ckvshader.util.ShaderResourceUtil;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.jogamp.opengl.*;
 import com.jogamp.opengl.util.GLBuffers;
+import com.jogamp.opengl.util.texture.awt.AWTTextureIO;
+import heronarts.glx.GLX;
+import heronarts.glx.ui.component.UIButton;
+import heronarts.glx.ui.component.UIKnob;
+import heronarts.glx.ui.component.UILabel;
+import heronarts.glx.ui.vg.VGraphics;
 import heronarts.lx.LX;
 import heronarts.lx.LXCategory;
 import heronarts.lx.LXComponent;
+import heronarts.lx.audio.GraphicMeter;
 import heronarts.lx.color.LXColor;
 import heronarts.lx.command.LXCommand;
+import heronarts.lx.model.LXPoint;
 import heronarts.lx.parameter.CompoundParameter;
 import heronarts.lx.parameter.LXParameter;
-import heronarts.lx.parameter.LXListenableParameter;
-import heronarts.lx.parameter.LXParameterListener;
 import heronarts.lx.parameter.MutableParameter;
 import heronarts.lx.parameter.StringParameter;
 import heronarts.lx.pattern.LXPattern;
@@ -29,11 +30,13 @@ import heronarts.lx.studio.ui.device.UIDevice;
 import heronarts.lx.studio.ui.device.UIDeviceControls;
 import heronarts.lx.utils.LXUtils;
 import heronarts.glx.ui.UI2dContainer;
-import heronarts.glx.ui.component.UIButton;
-import heronarts.glx.ui.component.UILabel;
 import heronarts.glx.ui.component.UISlider;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.*;
@@ -49,15 +52,14 @@ import static com.jogamp.opengl.GL.GL_STATIC_DRAW;
 import static com.jogamp.opengl.GL2ES2.GL_VERTEX_SHADER;
 import static com.jogamp.opengl.GL2ES3.*;
 
-/**
- * First attempt at using vertex shaders for volumetric rendering.
- */
 @LXCategory(LXCategory.FORM)
-public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> {
-  private static final Logger logger = Logger.getLogger(CkVShader.class.getName());
+public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVShaderFrames> {
+  private static final Logger logger = Logger.getLogger(CkVShaderFrames.class.getName());
   public GL3 gl;
 
-  StringParameter scriptName = new StringParameter("scriptName", "default");
+  StringParameter scriptName = new StringParameter("scriptName", "texture");
+  StringParameter frameDir = new StringParameter("frameDir", "");
+  CompoundParameter frameNumber = new CompoundParameter("frame", 0, 0, 1);
   CompoundParameter speed = new CompoundParameter("speed", 1f, 0f, 20f);
   CompoundParameter alphaThresh = new CompoundParameter("alfTh", 0.1f, -0.1f, 1f).
     setDescription("Intensity values below threshold will use transparency.");
@@ -70,56 +72,35 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
   public final MutableParameter onReload = new MutableParameter("Reload");
   public final StringParameter error = new StringParameter("Error", null);
   private UIButton openButton;
+  private UIButton frameDirButton;
   
-  // Shader caching
-  private ShaderCache shaderCache;
-  private boolean forceReload = false;
+  // Frame sequence management
+  private List<com.jogamp.opengl.util.texture.Texture> frameTextures = new ArrayList<>();
+  private List<String> frameFiles = new ArrayList<>();
+  private String currentFrameDir = "";
+  private int currentFrameIndex = 0;
+  
+  public int textureLoc = -3;
+  public int fftTextureLoc = -3;
 
-  public static GLOffscreenAutoDrawable glDrawable;
+  public final int TEXTURE_SIZE = 512;
 
-  Map<LXListenableParameter, List<LXParameterListener>> listeners = new HashMap<>();
-
-  public CkVShader(LX lx) {
+  public CkVShaderFrames(LX lx) {
     super(lx);
 
-    initializeGLContext(lx);
-    // Export default shaders from JAR resources to filesystem
-    // Do this after GL context is initialized but before shader cache
-    ShaderResourceUtil.exportDefaultShaders(lx);
-    
-    shaderCache = ShaderCache.getInstance(lx);
     addParameter("scriptName", scriptName);
+    addParameter("frameDir", frameDir);
+    addParameter("frame", frameNumber);
     addParameter("speed", speed);
     addParameter("alfTh", alphaThresh);
-    glInit(lx);
-  }
 
-  /**
-   * NOTE(tracy): These need to be called only after the the UI is up and running otherwise we are causing GL Context
-   * issues with threads.  We need top defer all initialization until the first run time.  This is going to be
-   * annoying.
-   */
-  static public void initializeGLContext() {
-    initializeGLContext(null);
-  }
-
-  static public void initializeGLContext(LX lx) {
-    logger.info("Calling initializeGLContext");
-    if (glDrawable == null) {
-      GLProfile glp = GLProfile.get(GLProfile.GL3);
-      GLCapabilities caps = new GLCapabilities(glp);
-      caps.setHardwareAccelerated(true);
-      caps.setDoubleBuffered(false);
-      // set bit count for all channels to get alpha to work correctly
-      caps.setAlphaBits(8);
-      caps.setRedBits(8);
-      caps.setBlueBits(8);
-      caps.setGreenBits(8);
-      caps.setOnscreen(false);
-      GLDrawableFactory factory = GLDrawableFactory.getFactory(glp);
-      glDrawable = factory.createOffscreenAutoDrawable(factory.getDefaultDevice(), caps, new DefaultGLCapabilitiesChooser(),512,512);
-      glDrawable.display();
-    }
+    CkVShader.initializeGLContext(lx);
+    // Export default shaders from JAR resources to filesystem
+    xyz.theforks.ckvshader.util.ShaderResourceUtil.exportDefaultShaders(lx);
+    
+    shaderCache = ShaderCache.getInstance(lx);
+    
+    glInit();
   }
 
   private interface Buffer {
@@ -145,6 +126,17 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
 
   float[] ledPositions;
 
+  int[] audioTextureHandle = {0};
+  byte[] fft = new byte[1024];
+  
+  // Shader caching
+  private ShaderCache shaderCache;
+  private boolean forceReload = false;
+  
+  // Texture resource management
+  private GLUtil.TextureLimits textureLimits;
+  private boolean textureInitialized = false;
+  
   protected void updateLedPositions() {
     for (int i = 0; i < model.points.length; i++) {
       ledPositions[i * 3] = model.points[i].xn;
@@ -153,20 +145,152 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     }
   }
 
+  protected void updateAudioTexture() {
+    // Create Audio FFT texture
+    if (fftTextureLoc < 0 || audioTextureHandle[0] == 0) {
+      return;
+    }
+    
+    // Validate texture handle
+    if (audioTextureHandle[0] <= 0) {
+      LX.log("Invalid audio texture handle: " + audioTextureHandle[0]);
+      return;
+    }
+    
+    GraphicMeter eq = lx.engine.audio.meter;
+    for (int i = 0; i < 1024; i++) {
+      int bandVal = (int)(eq.getBandf(i%16) * 255.0);
+      fft[i++] = (byte)(bandVal);
+    }
+    ByteBuffer fftBuf = ByteBuffer.wrap(fft);
+    
+    gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
+    GLUtil.checkGLError(gl, "audio texture bind");
+    
+    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 512, 2, 0, GL_RED, GL_UNSIGNED_BYTE, fftBuf);
+    GLUtil.checkGLError(gl, "audio texture data update");
+  }
+
   /**
-   * Allocate the CPU buffers for the input and the output.  Vertex setting should be moved to later if the
-   * LXPoints are going to move around.
-   * Also, reserve the OpenGL buffer IDs.
-   * Load the shader, bind the output that feeds into the transform feedback buffer, and link the shader.
+   * Load all frames from the specified directory into memory
    */
-  public void glInit(LX lx) {
+  private void loadFrameSequence(String directoryPath) {
+    LX.log("Loading frame sequence from: " + directoryPath);
+    
+    // Clear existing frames
+    clearFrameTextures();
+    frameFiles.clear();
+    currentFrameDir = directoryPath;
+    
+    if (directoryPath == null || directoryPath.isEmpty()) {
+      frameNumber = new CompoundParameter("frame", 0, 0, 1);
+      return;
+    }
+    
+    File dir = new File(directoryPath);
+    if (!dir.exists() || !dir.isDirectory()) {
+      LX.log("Directory does not exist: " + directoryPath);
+      frameNumber = new CompoundParameter("frame", 0, 0, 1);
+      return;
+    }
+    
+    // Get all image files and sort them
+    File[] files = dir.listFiles((d, name) -> 
+      name.toLowerCase().endsWith(".png") || 
+      name.toLowerCase().endsWith(".jpg") || 
+      name.toLowerCase().endsWith(".jpeg"));
+    
+    if (files == null || files.length == 0) {
+      LX.log("No image files found in directory: " + directoryPath);
+      frameNumber = new CompoundParameter("frame", 0, 0, 1);
+      return;
+    }
+    
+    Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+    
+    CkVShader.glDrawable.getContext().makeCurrent();
+    
+    // Load all frames into memory
+    for (File file : files) {
+      try {
+        BufferedImage image = ImageIO.read(file);
+        if (image != null) {
+          // Validate and resize texture if needed
+          if (textureLimits != null) {
+            if (!GLUtil.validateTextureSize(image.getWidth(), image.getHeight(), textureLimits)) {
+              image = GLUtil.resizeTextureIfNeeded(image, textureLimits.maxTextureSize);
+            }
+          }
+          
+          com.jogamp.opengl.util.texture.Texture texture = 
+            AWTTextureIO.newTexture(CkVShader.glDrawable.getGLProfile(), image, false);
+          GLUtil.checkGLError(gl, "frame texture creation");
+          
+          if (texture != null) {
+            // Set texture parameters
+            texture.bind(gl);
+            gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
+            gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST);
+            gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT);
+            gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT);
+            GLUtil.checkGLError(gl, "frame texture parameter setting");
+            
+            frameTextures.add(texture);
+            frameFiles.add(file.getName());
+            
+            // Record texture creation for monitoring
+            int bytesPerPixel = image.getColorModel().hasAlpha() ? 4 : 3;
+            GLUtil.TextureMonitor.recordTextureCreation(image.getWidth(), image.getHeight(), bytesPerPixel);
+          }
+        }
+      } catch (IOException e) {
+        LX.log("Error loading frame: " + file.getName() + " - " + e.getMessage());
+      }
+    }
+    
+    CkVShader.glDrawable.getContext().release();
+    
+    // Update frame parameter range  
+    if (frameTextures.size() > 0) {
+      removeParameter("frame");
+      frameNumber = new CompoundParameter("frame", 0, 0, frameTextures.size() - 1);
+      addParameter("frame", frameNumber);
+      LX.log("Loaded " + frameTextures.size() + " frames");
+    } else {
+      removeParameter("frame");
+      frameNumber = new CompoundParameter("frame", 0, 0, 1);
+      addParameter("frame", frameNumber);
+      LX.log("No frames loaded from directory: " + directoryPath);
+    }
+  }
+  
+  private void clearFrameTextures() {
+    if (gl != null && !frameTextures.isEmpty()) {
+      CkVShader.glDrawable.getContext().makeCurrent();
+      for (com.jogamp.opengl.util.texture.Texture texture : frameTextures) {
+        if (texture != null) {
+          texture.destroy(gl);
+        }
+      }
+      CkVShader.glDrawable.getContext().release();
+    }
+    frameTextures.clear();
+  }
+
+  public void glInit() {
     LXPoint[] points = model.points;
     ledPositions = new float[points.length * 3];
     updateLedPositions();
 
-    glDrawable.getContext().makeCurrent();
-    gl = glDrawable.getGL().getGL3();
-    //vertexBuffer = GLBuffers.newDirectFloatBuffer(ledPositions);
+    CkVShader.glDrawable.getContext().makeCurrent();
+    gl = CkVShader.glDrawable.getGL().getGL3();
+    
+    // Query texture limits from hardware
+    if (textureLimits == null) {
+      textureLimits = GLUtil.queryTextureLimits(gl);
+      LX.log("OpenGL Texture Limits: " + textureLimits.toString());
+    }
+    
     vertexBuffer = FloatBuffer.wrap(ledPositions);
 
     // This is just a destination, make it large enough to accept all the vertex data.  The vertex
@@ -174,9 +298,27 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     // geometry shader and filter there.  You will also need to carry along the lxpoint index with
     // the vertex data in that scenario to match it up after the transform feedback.
     tfbBuffer = GLBuffers.newDirectFloatBuffer(vertexBuffer.capacity());
-
+    
     gl.glGenBuffers(Buffer.MAX, bufferNames);
-    glDrawable.getContext().release();
+    GLUtil.checkGLError(gl, "buffer generation");
+    
+    // Set up audio texture.
+    gl.glGenTextures(1, audioTextureHandle, 0);
+    GLUtil.checkGLError(gl, "audio texture generation");
+    
+    if (audioTextureHandle[0] > 0) {
+      gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_MIRRORED_REPEAT);
+      gl.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_MIRRORED_REPEAT);
+      GLUtil.checkGLError(gl, "audio texture parameter setting");
+      LX.log("Created audio texture with handle: " + audioTextureHandle[0]);
+    } else {
+      LX.log("Failed to generate audio texture handle");
+    }
+
+    CkVShader.glDrawable.getContext().release();
 
     reloadShader(scriptName.getString());
   }
@@ -188,9 +330,8 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     reloadShader(shaderName, true);
   }
 
-
   public void reloadShader(String shaderName, boolean clearSliders) {
-    glDrawable.getContext().makeCurrent();
+    CkVShader.glDrawable.getContext().makeCurrent();
     if (shaderProgramId != -1)
       gl.glDeleteProgram(shaderProgramId);
 
@@ -251,13 +392,16 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
           }
         }
         
-        // Find fTime location from cached data
-        //fTimeLoc = paramLocations.getOrDefault("fTime", -2);
-        // fTime isn't one of the script-based params so it doesn't get passed into our shader cache saving
-        // mechanism so it is not stored in the manifest.
+        // Find uniform locations from cached data
         fTimeLoc = gl.glGetUniformLocation(shaderProgramId, "fTime");
         LX.log("Found fTimeLoc at: " + fTimeLoc);
-        glDrawable.getContext().release();
+        textureLoc = gl.glGetUniformLocation(shaderProgramId, "textureSampler");
+        LX.log("Found textureSampler at location: " + textureLoc);
+        if (audioTextureHandle[0] != 0) {
+          fftTextureLoc = gl.glGetUniformLocation(shaderProgramId, "audioTexture");
+          LX.log("Found audioTexture at location: " + fftTextureLoc);
+        }
+        CkVShader.glDrawable.getContext().release();
         onReload.bang();
         forceReload = false; // Reset force reload flag
         return;
@@ -287,7 +431,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     for (int k = 0; k < inputs.size(); k++) {
       JsonObject input = (JsonObject)inputs.get(k);
       String pName = input.get("NAME").getAsString();
-      String pType = input.get("TYPE").getAsString();
+      String pType = input.get("TYPE").getAsString(); // must be float for now
       float pDefault = input.get("DEFAULT").getAsFloat();
       float pMin = input.get("MIN").getAsFloat();
       float pMax =  input.get("MAX").getAsFloat();
@@ -335,6 +479,14 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       LX.log("Parameter: " + key + " at location: " + paramLocations.get(key));
     }
 
+    textureLoc = gl.glGetUniformLocation(shaderProgramId, "textureSampler");
+    LX.log("Found textureSampler at location: " + textureLoc);
+    
+    if (audioTextureHandle[0] != 0) {
+      fftTextureLoc = gl.glGetUniformLocation(shaderProgramId, "audioTexture");
+      LX.log("Found audioTexture at location: " + fftTextureLoc);
+    }
+
     // Cache the compiled shader
     try {
       LX.log("Attempting to cache shader: " + shaderName + " with program ID: " + shaderProgramId);
@@ -345,7 +497,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       ex.printStackTrace();
     }
 
-    glDrawable.getContext().release();
+    CkVShader.glDrawable.getContext().release();
     onReload.bang();
     forceReload = false; // Reset force reload flag
   }
@@ -358,22 +510,19 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       if (params.has("scriptName")) {
         this.scriptName.setValue(params.get("scriptName").getAsString());
       }
+      if (params.has("frameDir")) {
+        this.frameDir.setValue(params.get("frameDir").getAsString());
+      }
     }
     super.load(lx, obj);
   }
 
-  /**
-   * Run once per frame.  Copy the vertex data to the OpenGL buffer.
-   * Tell OpenGL which buffer to use as the transform feedback buffer.
-   * GL_RASTERIZER_DISCARD tells OpenGL to stop the pipeline after the vertex shader since
-   * we are just using OpenGL Transform Feedback.
-   *
-   * @param deltaMs
-   */
   public void glRun(double deltaMs) {
     totalTime += deltaMs/1000.0;
-    glDrawable.getContext().makeCurrent();
+    CkVShader.glDrawable.getContext().makeCurrent();
+    updateAudioTexture();
     updateLedPositions();
+
     gl.glBindBuffer(GL_ARRAY_BUFFER, bufferNames.get(Buffer.VERTEX));
     gl.glBufferData(GL_ARRAY_BUFFER, vertexBuffer.capacity() * Float.BYTES, vertexBuffer, GL_STATIC_DRAW);
     int inputAttrib = gl.glGetAttribLocation(shaderProgramId, "position");
@@ -391,6 +540,32 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     for (String paramName : scriptParams.keySet()) {
       gl.glUniform1f(paramLocations.get(paramName), scriptParams.get(paramName).getValuef());
     }
+    
+    // Bind the current frame texture
+    if (!frameTextures.isEmpty() && textureLoc >= 0) {
+      int frameIndex = (int) frameNumber.getValue();
+      frameIndex = Math.max(0, Math.min(frameIndex, frameTextures.size() - 1));
+      currentFrameIndex = frameIndex;
+      
+      com.jogamp.opengl.util.texture.Texture currentTexture = frameTextures.get(frameIndex);
+      if (currentTexture != null && GLUtil.validateTextureUnitUsage(0, textureLimits)) {
+        gl.glActiveTexture(GL_TEXTURE0);
+        currentTexture.enable(gl);
+        currentTexture.bind(gl);
+        gl.glUniform1i(textureLoc, 0); // 0 is the texture unit
+        GLUtil.checkGLError(gl, "frame texture binding");
+      }
+    }
+    
+    if (audioTextureHandle[0] > 0 && fftTextureLoc >= 0) {
+      if (GLUtil.validateTextureUnitUsage(1, textureLimits)) {
+        gl.glActiveTexture(GL_TEXTURE1);
+        gl.glBindTexture(GL_TEXTURE_2D, audioTextureHandle[0]);
+        gl.glUniform1i(fftTextureLoc, 1);
+        GLUtil.checkGLError(gl, "audio texture binding");
+      }
+    }
+
     gl.glBeginTransformFeedback(GL_POINTS);
     {
       gl.glDrawArrays(GL_POINTS, 0, model.points.length);
@@ -403,7 +578,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     gl.glUseProgram(0);
     gl.glDisable(GL_RASTERIZER_DISCARD);
 
-    glDrawable.getContext().release();
+    CkVShader.glDrawable.getContext().release();
   }
 
   @Override
@@ -411,6 +586,10 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     if (p == this.scriptName) {
       LX.log("scriptName parameter changed!");
       reloadShader(((StringParameter)p).getString());
+    }
+    if (p == this.frameDir) {
+      LX.log("frameDir parameter changed!");
+      loadFrameSequence(((StringParameter)p).getString());
     }
   }
 
@@ -425,29 +604,52 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       removeParameter(key);
     }
     scriptParams.clear();
+  }
 
+  @Override
+  public void dispose() {   
+    // Clean up frame textures
+    clearFrameTextures();
+    
+    // Clean up other resources
+    if (gl != null) {
+      CkVShader.glDrawable.getContext().makeCurrent();
+      
+      if (audioTextureHandle[0] > 0) {
+        LX.log("Disposing audio texture");
+        gl.glDeleteTextures(1, audioTextureHandle, 0);
+        audioTextureHandle[0] = 0;
+      }
+      
+      if (shaderProgramId != -1) {
+        LX.log("Disposing shader program");
+        gl.glDeleteProgram(shaderProgramId);
+        shaderProgramId = -1;
+      }
+      
+      GLUtil.checkGLError(gl, "resource disposal");
+      CkVShader.glDrawable.getContext().release();
+    }
+    
+    super.dispose();
   }
 
   public void run(double deltaMs) {
     glRun(deltaMs);
     LXPoint[] points = model.points;
-    // TODO(tracy): At some low brightness threshold, we should introduce alpha transparency.
-    // The alpha level should be scaled from 1 to 0 based on the range from 0 to threshold.
-    // Hardcoding the threshold for now since it is some complicated UI work to fit it into
-    // the dynamic parameter system.
     float threshold = alphaThresh.getValuef();
     for (int i = 0; i < points.length; i++) {
-      float red = tfbBuffer.get(i * 3);
-      float green = tfbBuffer.get(i * 3 + 1);
-      float blue = tfbBuffer.get(i * 3 + 2);
+      float red = tfbBuffer.get(i*3);
+      float green = tfbBuffer.get(i*3 + 1);
+      float blue = tfbBuffer.get(i*3 + 2);
       int color = LXColor.rgbf(red, green, blue);
-      float bright = LXColor.luminosity(color) / 100f;
+      float bright = LXColor.luminosity(color)/100f;
       if (bright < threshold) {
-        float alpha = (bright / threshold);
+        float alpha = (bright/threshold);
         colors[points[i].index] = LXColor.rgba(LXColor.red(color),
           LXColor.green(color),
           LXColor.blue(color),
-          (int) (255f * alpha));
+          (int)(255f * alpha));
       } else {
         colors[points[i].index] = color;
       }
@@ -455,11 +657,12 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
   }
 
   @Override
-  public void buildDeviceControls(LXStudio.UI ui, UIDevice uiDevice, CkVShader pattern) {
-    int minContentWidth = 190;
+  public void buildDeviceControls(LXStudio.UI ui, UIDevice uiDevice, CkVShaderFrames pattern) {
+    int minContentWidth = 280;
     uiDevice.setContentWidth(minContentWidth);
+
     final UILabel fileLabel = (UILabel)
-      new UILabel(0, 0, 120, 18)
+      new UILabel(0, 0, 90, 18)
         .setLabel(pattern.scriptName.getString())
         .setBackgroundColor(LXColor.BLACK)
         .setBorderRounding(4)
@@ -467,22 +670,11 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
         .setTextOffset(0, -1)
         .addToContainer(uiDevice);
 
-    //pattern.scriptName.addListener(p -> {
-    //  fileLabel.setLabel(pattern.scriptName.getString());
-    //});
-    // Wrap the listener so we can clean it up on dispose.
-    addParamListener(pattern.scriptName, new LXParameterListener() {
-      public void onParameterChanged(LXParameter p) {
-        fileLabel.setLabel(pattern.scriptName.getString());
-      }
+    pattern.scriptName.addListener(p -> {
+      fileLabel.setLabel(pattern.scriptName.getString());
     });
 
-    final UI2dContainer sliders = (UI2dContainer)
-            UI2dContainer.newHorizontalContainer(uiDevice.getContentHeight() - 20, 2)
-                    .setPosition(0, 20)
-                    .addToContainer(uiDevice);
-
-    this.openButton = (UIButton) new UIButton(125, 0, 18, 18) {
+    this.openButton = (UIButton) new UIButton(95, 0, 18, 18) {
       @Override
       public void onToggle(boolean on) {
         if (on) {
@@ -491,7 +683,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
             "Vertex Shader",
             new String[] { "vtx" },
             GLUtil.shaderDir(lx) + File.separator,
-            (path) -> { onOpen(new File(path), sliders); }
+            (path) -> { onOpen(new File(path)); }
           );
         }
       }
@@ -501,11 +693,45 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       .setDescription("Open Shader")
       .addToContainer(uiDevice);
 
-    final UIButton resetButton = (UIButton) new UIButton(148, 0, 18, 18) {
+    // Frame directory selection:
+    final UILabel frameDirLabel = (UILabel)
+      new UILabel(118, 0, 90, 18)
+        .setLabel(pattern.frameDir.getString().isEmpty() ? "No Folder" : 
+                  new File(pattern.frameDir.getString()).getName())
+        .setBackgroundColor(LXColor.BLACK)
+        .setBorderRounding(4)
+        .setTextAlignment(VGraphics.Align.CENTER, VGraphics.Align.MIDDLE)
+        .setTextOffset(0, -1)
+        .addToContainer(uiDevice);
+
+    pattern.frameDir.addListener(p -> {
+      String dirPath = pattern.frameDir.getString();
+      frameDirLabel.setLabel(dirPath.isEmpty() ? "No Folder" : new File(dirPath).getName());
+    });
+
+    this.frameDirButton = (UIButton) new UIButton(213, 0, 18, 18) {
       @Override
       public void onToggle(boolean on) {
         if (on) {
-          sliders.removeAllChildren();
+          ((GLX)lx).showOpenFileDialog(
+            "Select Any File in Frame Directory",
+            "Image",
+            new String[] { "png", "jpg", "jpeg" },
+            GLUtil.shaderDir(lx) + File.separator + "textures" + File.separator,
+            (path) -> { onOpenFrameDir(new File(path).getParentFile()); }
+          );
+        }
+      }
+    }
+      .setIcon(ui.theme.iconOpen)
+      .setMomentary(true)
+      .setDescription("Select Frame Directory (pick any file in the directory)")
+      .addToContainer(uiDevice);
+
+    final UIButton resetButton = (UIButton) new UIButton(236, 0, 18, 18) {
+      @Override
+      public void onToggle(boolean on) {
+        if (on) {
           lx.engine.addTask(() -> {
             logger.info("Force reloading shader (bypassing cache)");
             forceReload = true;
@@ -518,7 +744,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       .setDescription("Force reload shader (bypass cache)")
       .addToContainer(uiDevice);
 
-    final UIButton clearCacheButton = (UIButton) new UIButton(171, 0, 18, 18) {
+    final UIButton clearCacheButton = (UIButton) new UIButton(259, 0, 18, 18) {
       @Override
       public void onToggle(boolean on) {
         if (on) {
@@ -533,11 +759,13 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       .setDescription("Clear shader cache")
       .addToContainer(uiDevice);
 
-
-
+    final UI2dContainer sliders = (UI2dContainer)
+      UI2dContainer.newHorizontalContainer(uiDevice.getContentHeight() - 22, 2)
+        .setPosition(0, 22)
+        .addToContainer(uiDevice);
 
     final UILabel error = (UILabel)
-      new UILabel(0, 20, uiDevice.getContentWidth(), uiDevice.getContentHeight() - 20)
+      new UILabel(0, 22, uiDevice.getContentWidth(), uiDevice.getContentHeight() - 22)
         .setBreakLines(true)
         .setTextAlignment(VGraphics.Align.LEFT, VGraphics.Align.TOP)
         .addToContainer(uiDevice)
@@ -545,21 +773,20 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
 
     // Add sliders to container on every reload
     pattern.onReload.addListener(p -> {
-      //sliders.removeAllChildren();
+      sliders.removeAllChildren();
       new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
         .addToContainer(sliders);
       new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
         .addToContainer(sliders);
-      for (CompoundParameter scriptParam : pattern.scriptParams.values()) {
-        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, scriptParam)
+      new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, frameNumber)
+        .addToContainer(sliders);
+      for (CompoundParameter slider : pattern.scriptParams.values()) {
+        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, slider)
           .addToContainer(sliders);
       }
       float contentWidth = LXUtils.maxf(minContentWidth, sliders.getContentWidth());
       uiDevice.setContentWidth(contentWidth);
-      //resetButton.setX(contentWidth - resetButton.getWidth());
-      //this.openButton.setX(resetButton.getX() - 2 - this.openButton.getWidth());
       error.setWidth(contentWidth);
-      //fileLabel.setWidth(this.openButton.getX() - 2);
     }, true);
 
     pattern.error.addListener(p -> {
@@ -569,16 +796,15 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       error.setVisible(hasError);
       sliders.setVisible(!hasError);
     }, true);
-
   }
 
-  public void onOpen(final File openFile, UI2dContainer sliders) {
+  public void onOpen(final File openFile) {
     this.openButton.setActive(false);
     if (openFile != null) {
       LX lx = getLX();
       String baseFilename = openFile.getName().substring(0, openFile.getName().indexOf('.'));
       LX.log("Loading: " + baseFilename);
-      sliders.removeAllChildren();
+
       lx.engine.addTask(() -> {
         LX.log("Running script name setting task");
         lx.command.perform(new LXCommand.Parameter.SetString(
@@ -588,21 +814,21 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       });
     }
   }
+  
+  public void onOpenFrameDir(final File directory) {
+    this.frameDirButton.setActive(false);
+    if (directory != null && directory.isDirectory()) {
+      LX lx = getLX();
+      String dirPath = directory.getAbsolutePath();
+      LX.log("Loading frame directory: " + dirPath);
 
-  public void addParamListener(LXListenableParameter p, LXParameterListener l) {
-    p.addListener(l);
-    List<LXParameterListener> plisteners = listeners.computeIfAbsent(p, k -> new ArrayList<>());
-    plisteners.add(l);
-  }
-
-  @Override
-  public void dispose() {  
-    for (LXListenableParameter param : listeners.keySet()) {
-      for (LXParameterListener listener : listeners.get(param)) {
-        param.removeListener(listener);
-      }
+      lx.engine.addTask(() -> {
+        LX.log("Running frame directory setting task");
+        lx.command.perform(new LXCommand.Parameter.SetString(
+          frameDir,
+          dirPath
+        ));
+      });
     }
-    listeners.clear();
-    super.dispose();
   }
 }
