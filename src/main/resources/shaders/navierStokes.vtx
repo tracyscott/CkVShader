@@ -117,6 +117,9 @@ uniform float audioReactive;
 uniform float boundaries;
 uniform float colorMode;
 
+// Audio texture for reactive effects
+uniform sampler2D audioTexture;
+
 layout(location = 0) in vec3 position;
 out vec3 outColor;
 
@@ -142,6 +145,21 @@ vec2 getStoredVelocity(vec2 coord) {
     baseFlow += 0.3 * vec2(sin(fTime * 1.5 + coord.x * 10.0), 
                           cos(fTime * 2.0 + coord.y * 8.0));
     
+    // Audio-reactive velocity modulation
+    if (audioReactive > 0.0) {
+        float bassLevel = texture(audioTexture, vec2(0.1, 0.5)).r;
+        float midLevel = texture(audioTexture, vec2(0.5, 0.5)).r;
+        
+        // Bass creates outward radial flow from center
+        vec2 radialFlow = normalize(offset) * bassLevel * audioReactive * 0.8;
+        
+        // Mid frequencies create spiral patterns
+        float spiralAngle = angle + midLevel * audioReactive * 2.0;
+        vec2 spiralFlow = vec2(-sin(spiralAngle), cos(spiralAngle)) * midLevel * audioReactive * 0.6;
+        
+        baseFlow += radialFlow + spiralFlow;
+    }
+    
     return baseFlow * 0.5;
 }
 
@@ -163,6 +181,36 @@ float getStoredDensity(vec2 coord) {
     density += exp(-length(coord - source1) * 30.0) * densitySource * 0.7;
     density += exp(-length(coord - source2) * 25.0) * densitySource * 0.8;
     
+    // Audio-reactive density injection
+    if (audioReactive > 0.0) {
+        // Sample audio for bass frequencies
+        float bassLevel = texture(audioTexture, vec2(0.1, 0.5)).r;
+        float midLevel = texture(audioTexture, vec2(0.5, 0.5)).r;
+        float highLevel = texture(audioTexture, vec2(0.9, 0.5)).r;
+        
+        // Bass creates central density burst
+        density += exp(-dist * dist * 15.0) * bassLevel * audioReactive * 2.0;
+        
+        // Mid frequencies create ring patterns
+        float ringDist = abs(dist - 0.3);
+        density += exp(-ringDist * 40.0) * midLevel * audioReactive * 1.5;
+        
+        // High frequencies create scattered density spots
+        vec2 highSpot1 = vec2(0.2, 0.3);
+        vec2 highSpot2 = vec2(0.8, 0.7);
+        vec2 highSpot3 = vec2(0.2, 0.8);
+        vec2 highSpot4 = vec2(0.8, 0.2);
+        
+        density += exp(-length(coord - highSpot1) * 50.0) * highLevel * audioReactive * 1.0;
+        density += exp(-length(coord - highSpot2) * 50.0) * highLevel * audioReactive * 1.0;
+        density += exp(-length(coord - highSpot3) * 50.0) * highLevel * audioReactive * 1.0;
+        density += exp(-length(coord - highSpot4) * 50.0) * highLevel * audioReactive * 1.0;
+        
+        // Add audio-reactive density along the edges for spatial distribution
+        float edgeEffect = sin(coord.x * PI * 4.0) * sin(coord.y * PI * 3.0);
+        density += max(0.0, edgeEffect) * (bassLevel + midLevel) * audioReactive * 0.5;
+    }
+    
     return density;
 }
 
@@ -180,10 +228,10 @@ void main() {
     
     // Audio-reactive force modulation
     if (audioReactive > 0.0) {
-        // Multiple audio frequency bands for richer interaction
-        float bassForce = sin(fTime * 4.0) * audioReactive;
-        float midForce = sin(fTime * 8.0) * audioReactive * 0.7;
-        float highForce = sin(fTime * 16.0) * audioReactive * 0.5;
+        // Sample audio texture for different frequency bands
+        float bassForce = texture(audioTexture, vec2(0.1, 0.5)).r * audioReactive;
+        float midForce = texture(audioTexture, vec2(0.5, 0.5)).r * audioReactive * 0.7;
+        float highForce = texture(audioTexture, vec2(0.9, 0.5)).r * audioReactive * 0.5;
         
         // Modulate force magnitude with audio
         forceVector *= (1.0 + bassForce + midForce * 0.5);
@@ -192,8 +240,8 @@ void main() {
         vec2 vortex1 = vec2(0.3 + 0.2 * sin(fTime * 0.7), 0.6 + 0.1 * cos(fTime * 1.1));
         vec2 vortex2 = vec2(0.7 + 0.1 * cos(fTime * 0.9), 0.4 + 0.2 * sin(fTime * 0.6));
         
-        float swirl1 = cos(fTime * 8.0 + length(uv - vortex1) * 20.0) * audioReactive;
-        float swirl2 = sin(fTime * 12.0 + length(uv - vortex2) * 15.0) * audioReactive;
+        float swirl1 = texture(audioTexture, vec2(0.3, 0.5)).r * audioReactive;
+        float swirl2 = texture(audioTexture, vec2(0.7, 0.5)).r * audioReactive;
         
         vec2 swirlForce1 = vec2(-(uv.y - vortex1.y), (uv.x - vortex1.x)) * swirl1;
         vec2 swirlForce2 = vec2((uv.y - vortex2.y), -(uv.x - vortex2.x)) * swirl2;
@@ -201,7 +249,7 @@ void main() {
         forceVector += (swirlForce1 + swirlForce2) * 0.5;
         
         // Audio-reactive turbulence injection
-        float turbulence = highForce * sin(uv.x * 30.0 + fTime * 10.0) * cos(uv.y * 25.0 + fTime * 8.0);
+        float turbulence = highForce * (0.5 + 0.5 * sin(uv.x * 30.0 + fTime * 10.0) * cos(uv.y * 25.0 + fTime * 8.0));
         forceVector += vec2(turbulence * 0.3, turbulence * -0.2);
     }
     
