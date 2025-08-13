@@ -1,0 +1,199 @@
+/*{
+	"DESCRIPTION": "Radial glowing particles shooting from center to edge of circular disk",
+	"CREDIT": "by tracyscott + Roo",
+	"ISFVSN": "2.0",
+	"CATEGORIES": [
+		"VERTEX SDF",
+		"PARTICLES",
+		"GEOMETRIC"
+	],
+	"INPUTS": [
+		{
+			"NAME": "particleFreq",
+			"TYPE": "float",
+			"DEFAULT": 6.0,
+			"MIN": 0.0,
+			"MAX": 40.0
+		},
+		{
+			"NAME": "particleSize",
+			"TYPE": "float",
+			"DEFAULT": 0.035,
+			"MIN": 0.005,
+			"MAX": 0.15
+		},
+		{
+			"NAME": "trail",
+			"TYPE": "float",
+			"DEFAULT": 0.22,
+			"MIN": 0.0,
+			"MAX": 0.8
+		},
+		{
+			"NAME": "spd",
+			"TYPE": "float",
+			"DEFAULT": 0.6,
+			"MIN": 0.0,
+			"MAX": 3.0
+		},
+		{
+			"NAME": "twinkle",
+			"TYPE": "float",
+			"DEFAULT": 0.25,
+			"MIN": 0.0,
+			"MAX": 1.0
+		},
+		{
+			"NAME": "paletteIdx",
+			"TYPE": "float",
+			"DEFAULT": 3.0,
+			"MIN": 1.0,
+			"MAX": 5.0
+		}
+	]
+}*/
+
+#version 330
+
+uniform float fTime;
+uniform float particleFreq;   // particles per second (approx)
+uniform float particleSize;   // core size (radius) of particle glow
+uniform float trail;          // trail length factor
+uniform float spd;            // outward speed
+uniform float twinkle;        // extra sparkle
+uniform float paletteIdx;     // palette selector for paletteN
+
+layout(location = 0) in vec3 position;
+out vec3 outColor;
+
+#include <palettes.vti>
+#include <sdf2d.vti>
+#include <consts.vti>
+
+// Hash helpers for pseudo-randomness
+float hash11(float x){
+	return fract(sin(x * 127.1) * 43758.5453123);
+}
+float hash21(vec2 p){
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+// Radial particle system seeded by time slices
+// Each spawn has: angle, start time offset within slice, color seed, lifetime
+struct Particle {
+	float angle;    // direction angle
+	float t0;       // spawn time
+	float life;     // lifetime duration
+	float hue;      // color seed
+};
+
+Particle makeParticle(float id, float sliceStart){
+	// Random attributes per id
+	float ang = hash11(id * 1.13 + 3.7) * 2.0 * PI;
+	float jitter = hash11(id * 5.17 + 0.91) * (1.0 / max(1.0, particleFreq)); // spread within slice
+	float life = 1.0 + 0.6 * hash11(id * 2.31 + 7.21); // seconds
+	float hue = hash11(id * 4.79 + 9.13) * 5.0; // palette variant domain
+	Particle p;
+	p.angle = ang;
+	p.t0 = sliceStart + jitter;
+	p.life = life;
+	p.hue = hue;
+	return p;
+}
+
+// Distance to a radial line segment from center with soft width
+float sdRadialLine(vec2 p, vec2 dir, float r0, float r1, float halfWidth){
+	// project p on dir
+	float d = dot(p, dir);
+	float t = clamp(d, r0, r1);
+	vec2 q = dir * t;
+	return length(p - q) - halfWidth;
+}
+
+void main(){
+	// Centered coordinates on disk
+	vec2 uv = position.xy - 0.5;
+	float r = length(uv);
+	float a = atan(uv.y, uv.x);
+
+	// Mask to ensure particles disappear off edge of disk
+	float diskMask = 1.0 - smoothstep(0.49, 0.50, r);
+
+	// Timebase
+	float t = fTime;
+	float baseSpeed = max(0.05, spd);
+
+	// Determine how many particle slices to consider this frame
+	// We use a small window around current time to accumulate visible particles
+	float freq = max(0.0, particleFreq);
+	float slice = (freq > 0.0) ? (1.0 / freq) : 1e6;
+
+	// We consider spawns in a time window [t - maxLife, t]
+	float maxLife = 2.0; // cap visible lifetime for performance
+	int stepsBack = int(ceil(maxLife / max(1e-3, slice)));
+	// Limit to a sensible number
+	stepsBack = clamp(stepsBack, 0, 64);
+
+	vec3 color = vec3(0.0);
+
+	// Accumulate particles
+	for (int i = 0; i <= stepsBack; ++i){
+		float sliceStart = t - float(i) * slice;
+		// Generate a few sub-particles per slice for richness at low frequency
+		for (int k = 0; k < 3; ++k){
+			float id = float(i * 3 + k);
+			Particle P = makeParticle(id + floor(sliceStart * 123.0), sliceStart);
+
+			float age = t - P.t0;
+			if (age < 0.0) continue;
+			if (age > P.life) continue;
+
+			// Particle head position moves radially outward
+			vec2 dir = vec2(cos(P.angle), sin(P.angle));
+			float headR = age * baseSpeed; // radius from center
+
+			// If off the disk, skip
+			if (headR > 0.5) continue;
+
+			// Trail length relative to age
+			float tl = mix(0.05, 0.45, clamp(trail, 0.0, 1.0));
+			float tailR = max(0.0, headR - tl);
+			float halfW = particleSize; // visual size
+
+			// Signed distance to radial line segment representing the particle
+			float d = sdRadialLine(uv, dir, tailR, headR, halfW);
+
+			// Glow falloff around the line
+			float core = exp(- (d * 160.0 * (1.0 / max(0.005, particleSize))));
+			float soft = 0.35 * exp(- (d * 30.0));
+
+			// Fade by age within life to avoid popping
+			float lifeFade = smoothstep(P.life, P.life * 0.7, age);
+
+			// Twinkle modulates intensity with slight per-particle variation
+			float tw = 1.0 + twinkle * 0.5 * sin(t * (3.0 + 2.0 * hash11(P.hue + 0.37)) + P.hue);
+
+			// Palette based on per-particle hue and radius
+			float palT = P.hue + headR * 2.5 + 0.3 * t;
+			vec3 col = paletteN(palT, clamp(paletteIdx, 1.0, 5.0));
+
+			// Combine
+			vec3 glow = col * (0.85 * core + soft) * lifeFade * tw;
+
+			// Add slight head emphasis
+			float headD = length(uv - dir * headR);
+			float headGlow = exp(- (headD * headD) / max(1e-5, particleSize * particleSize * 0.7));
+			glow += col * 0.6 * headGlow;
+
+			color += glow;
+		}
+	}
+
+	// Soft center glow
+	color += paletteN(t * 0.2, clamp(paletteIdx, 1.0, 5.0)) * (0.02 / (0.02 + r * r));
+
+	// Respect disk and clamp
+	color *= diskMask;
+
+	outColor = clamp(color, 0.0, 1.0);
+}
