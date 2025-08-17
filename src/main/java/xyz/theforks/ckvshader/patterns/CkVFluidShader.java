@@ -357,25 +357,43 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         int endOfComment = shaderSource.indexOf("*/");
         int startOfComment = shaderSource.indexOf("/*");
         if (startOfComment >= 0 && endOfComment > startOfComment) {
-            String jsonDef = shaderSource.substring(startOfComment + 2, endOfComment);
-            isfObj = (JsonObject)new JsonParser().parse(jsonDef);
-            
-            if (isfObj.has("INPUTS")) {
-                JsonArray inputs = isfObj.getAsJsonArray("INPUTS");
-                for (int k = 0; k < inputs.size(); k++) {
-                    JsonObject input = (JsonObject)inputs.get(k);
-                    String pName = input.get("NAME").getAsString();
-                    float pDefault = input.get("DEFAULT").getAsFloat();
-                    float pMin = input.get("MIN").getAsFloat();
-                    float pMax = input.get("MAX").getAsFloat();
-                    
-                    if (!scriptParams.containsKey(pName)) {
-                        CompoundParameter cp = new CompoundParameter(pName, pDefault, pMin, pMax);
-                        scriptParams.put(pName, cp);
-                        addParameter(pName, cp);
+            try {
+                String jsonDef = shaderSource.substring(startOfComment + 2, endOfComment);
+                isfObj = (JsonObject)new JsonParser().parse(jsonDef);
+                
+                if (isfObj != null && isfObj.has("INPUTS")) {
+                    JsonArray inputs = isfObj.getAsJsonArray("INPUTS");
+                    if (inputs != null) {
+                        for (int k = 0; k < inputs.size(); k++) {
+                            try {
+                                JsonObject input = (JsonObject)inputs.get(k);
+                                if (input.has("NAME") && input.has("DEFAULT") && 
+                                    input.has("MIN") && input.has("MAX")) {
+                                    String pName = input.get("NAME").getAsString();
+                                    float pDefault = input.get("DEFAULT").getAsFloat();
+                                    float pMin = input.get("MIN").getAsFloat();
+                                    float pMax = input.get("MAX").getAsFloat();
+                                    
+                                    if (!scriptParams.containsKey(pName)) {
+                                        CompoundParameter cp = new CompoundParameter(pName, pDefault, pMin, pMax);
+                                        scriptParams.put(pName, cp);
+                                        addParameter(pName, cp);
+                                    }
+                                    newSliderKeys.add(pName);
+                                } else {
+                                    LX.log("Skipping ISF input with missing required fields at index " + k);
+                                }
+                            } catch (Exception e) {
+                                LX.log("Error parsing ISF input at index " + k + ": " + e.getMessage());
+                            }
+                        }
                     }
-                    newSliderKeys.add(pName);
+                } else {
+                    LX.log("No ISF metadata or INPUTS found in shader");
                 }
+            } catch (Exception e) {
+                LX.log("Error parsing ISF metadata: " + e.getMessage());
+                // Continue without ISF parameters rather than crashing
             }
         }
     }

@@ -31,29 +31,50 @@ public class ShaderResourceUtil {
         
         // Get the shader directory path
         String shaderDir = GLUtil.shaderDir(lx);
+        LX.log("Target shader directory: " + shaderDir);
         File shaderDirFile = new File(shaderDir);
         if (!shaderDirFile.exists()) {
+            LX.log("Creating shader directory: " + shaderDir);
             shaderDirFile.mkdirs();
         }
 
-        // Export shader files - use the same approach as textures to ensure we get the right JAR
+        // Export shader files - look for resources under data/shaders path
         // First get a known working resource URL from our JAR
-        URL texturesDirUrl = ShaderResourceUtil.class.getClassLoader().getResource("shaders/textures");
+        LX.log("Looking for shader resources...");
+        URL texturesDirUrl = ShaderResourceUtil.class.getClassLoader().getResource("data/shaders/textures");
+        if (texturesDirUrl == null) {
+            LX.log("data/shaders/textures resource not found, checking data/shaders...");
+            texturesDirUrl = ShaderResourceUtil.class.getClassLoader().getResource("data/shaders");
+        }
         
         // Now construct the shaders URL from the same JAR
         List<String> includedShaders = new ArrayList<>();
-        if (texturesDirUrl != null && texturesDirUrl.toString().contains("ckvshader")) {
-            String baseJarUrl = texturesDirUrl.toString().replace("shaders/textures", "shaders");
-            try {
-                URL shadersUrl = new URL(baseJarUrl);
-                includedShaders = listResourceFilesFromUrl(shadersUrl, "shaders", Arrays.asList(".vtx", ".vti"));
-            } catch (Exception e) {
+        if (texturesDirUrl != null) {
+            LX.log("Found resource URL: " + texturesDirUrl.toString());
+            if (texturesDirUrl.toString().contains("ckvshader")) {
+                String baseJarUrl = texturesDirUrl.toString().replace("data/shaders/textures", "data/shaders");
+                LX.log("Constructed base JAR URL: " + baseJarUrl);
+                try {
+                    URL shadersUrl = new URL(baseJarUrl);
+                    includedShaders = listResourceFilesFromUrl(shadersUrl, "data/shaders", Arrays.asList(".vtx", ".vti"));
+                } catch (Exception e) {
+                    LX.log("Error listing shaders from URL: " + e.getMessage());
+                }
+            } else {
+                LX.log("Resource URL does not contain 'ckvshader', skipping custom logic");
             }
+        } else {
+            LX.log("No shader resource URL found");
         }
         
         if (includedShaders.isEmpty()) {
             // Fallback to original method
-            includedShaders = getIncludedShaderFiles(ShaderResourceUtil.class, "shaders");
+            includedShaders = getIncludedShaderFiles(ShaderResourceUtil.class, "data/shaders");
+        }
+        
+        LX.log("Found " + includedShaders.size() + " shader files to export");
+        for (String shader : includedShaders) {
+            LX.log("  - " + shader);
         }
         
         for (String includedShader : includedShaders) {
@@ -61,9 +82,10 @@ public class ShaderResourceUtil {
             if (!shaderFile.exists()) {
                 LX.log("Exporting CkVShader shader: " + includedShader);
                 try {
-                    copyResourceToFile(ShaderResourceUtil.class, "shaders/" + includedShader, shaderFile);
+                    copyResourceToFile(ShaderResourceUtil.class, "data/shaders/" + includedShader, shaderFile);
+                    LX.log("Successfully exported: " + includedShader);
                 } catch (Exception e) {
-                    LX.log("Error copying shader file: " + e.getMessage());
+                    LX.log("Error copying shader file " + includedShader + ": " + e.getMessage());
                 }
             }
         }
@@ -75,13 +97,13 @@ public class ShaderResourceUtil {
             textureDirFile.mkdirs();
         }
 
-        List<String> includedTextures = getIncludedTextureFiles(ShaderResourceUtil.class, "shaders/textures");
+        List<String> includedTextures = getIncludedTextureFiles(ShaderResourceUtil.class, "data/shaders/textures");
         for (String includedTexture : includedTextures) {
             File textureFile = new File(textureDir + File.separator + includedTexture);
             if (!textureFile.exists()) {
                 LX.log("Exporting CkVShader texture: " + includedTexture);
                 try {
-                    copyResourceToFile(ShaderResourceUtil.class, "shaders/textures/" + includedTexture, textureFile);
+                    copyResourceToFile(ShaderResourceUtil.class, "data/shaders/textures/" + includedTexture, textureFile);
                 } catch (Exception e) {
                     LX.log("Error copying texture file: " + e.getMessage());
                 }

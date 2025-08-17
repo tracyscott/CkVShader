@@ -18,6 +18,7 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.regex.Pattern;
 import java.util.*;
 
 import static com.jogamp.opengl.GL.*;
@@ -546,6 +547,45 @@ public class GLUtil {
       filename = filename.substring(0, filename.length() - 4);
     }
     return filename;
+  }
+
+  /**
+   * Extract the plugin directory component from a file path.
+   * Returns the appropriate directory component for the string parameter.
+   * 
+   * @param lx LX instance
+   * @param filePath Absolute path to the selected file
+   * @return Plugin directory component (e.g., "MyPlugin/shaders" or "CkVShader/shaders")
+   */
+  static public String extractPluginDirectoryFromPath(LX lx, String filePath) {
+    String dataPath = lx.getMediaPath() + File.separator + "Data" + File.separator;
+    
+    // Normalize paths for comparison
+    try {
+      filePath = new File(filePath).getCanonicalPath();
+      dataPath = new File(dataPath).getCanonicalPath();
+    } catch (Exception e) {
+      LX.log("Error normalizing paths: " + e.getMessage());
+      return "CkVShader/shaders";
+    }
+    
+    // Check if the file is within the Data directory
+    if (filePath.startsWith(dataPath)) {
+      String relativePath = filePath.substring(dataPath.length());
+      if (relativePath.startsWith(File.separator)) {
+        relativePath = relativePath.substring(1);
+      }
+      
+      // Split the relative path to extract plugin name
+      String[] parts = relativePath.split(Pattern.quote(File.separator));
+      if (parts.length >= 3 && "shaders".equals(parts[1])) {
+        // Format: PluginName/shaders/filename.vtx
+        return parts[0] + "/shaders";
+      }
+    }
+    
+    // Default fallback
+    return "CkVShader/shaders";
   }
 
   /**

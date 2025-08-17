@@ -424,26 +424,51 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
       LX.log("Error loading shader: " + ex.getMessage());
     }
 
-    int endOfComment = shaderSource.indexOf("*/");
-    int startOfComment = shaderSource.indexOf("/*");
-    String jsonDef = shaderSource.substring(startOfComment + 2, endOfComment);
-    isfObj = (JsonObject)new JsonParser().parse(jsonDef);
-    JsonArray inputs = isfObj.getAsJsonArray("INPUTS");
-
-    for (int k = 0; k < inputs.size(); k++) {
-      JsonObject input = (JsonObject)inputs.get(k);
-      String pName = input.get("NAME").getAsString();
-      String pType = input.get("TYPE").getAsString(); // must be float for now
-      float pDefault = input.get("DEFAULT").getAsFloat();
-      float pMin = input.get("MIN").getAsFloat();
-      float pMax =  input.get("MAX").getAsFloat();
+    try {
+      int endOfComment = shaderSource.indexOf("*/");
+      int startOfComment = shaderSource.indexOf("/*");
       
-      if (clearSliders || (!clearSliders && !scriptParams.containsKey(pName))) {
-        CompoundParameter cp = new CompoundParameter(pName, pDefault, pMin, pMax);
-        scriptParams.put(pName, cp);
-        addParameter(pName, cp);
+      if (startOfComment >= 0 && endOfComment > startOfComment) {
+        String jsonDef = shaderSource.substring(startOfComment + 2, endOfComment);
+        isfObj = (JsonObject)new JsonParser().parse(jsonDef);
+        
+        if (isfObj != null && isfObj.has("INPUTS")) {
+          JsonArray inputs = isfObj.getAsJsonArray("INPUTS");
+          if (inputs != null) {
+            for (int k = 0; k < inputs.size(); k++) {
+              try {
+                JsonObject input = (JsonObject)inputs.get(k);
+                if (input.has("NAME") && input.has("TYPE") && input.has("DEFAULT") && 
+                    input.has("MIN") && input.has("MAX")) {
+                  String pName = input.get("NAME").getAsString();
+                  String pType = input.get("TYPE").getAsString(); // must be float for now
+                  float pDefault = input.get("DEFAULT").getAsFloat();
+                  float pMin = input.get("MIN").getAsFloat();
+                  float pMax = input.get("MAX").getAsFloat();
+                  
+                  if (clearSliders || (!clearSliders && !scriptParams.containsKey(pName))) {
+                    CompoundParameter cp = new CompoundParameter(pName, pDefault, pMin, pMax);
+                    scriptParams.put(pName, cp);
+                    addParameter(pName, cp);
+                  }
+                  newSliderKeys.add(pName);
+                } else {
+                  LX.log("Skipping ISF input with missing required fields at index " + k);
+                }
+              } catch (Exception e) {
+                LX.log("Error parsing ISF input at index " + k + ": " + e.getMessage());
+              }
+            }
+          }
+        } else {
+          LX.log("No ISF metadata or INPUTS found in shader");
+        }
+      } else {
+        LX.log("No ISF comment block found in shader");
       }
-      newSliderKeys.add(pName);
+    } catch (Exception e) {
+      LX.log("Error parsing ISF metadata: " + e.getMessage());
+      // Continue without ISF parameters rather than crashing
     }
     
     if (!clearSliders) {
@@ -814,13 +839,15 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     if (openFile != null) {
       LX lx = getLX();
       String baseFilename = openFile.getName().substring(0, openFile.getName().indexOf('.'));
-      LX.log("Loading: " + baseFilename);
+      String pluginDir = GLUtil.extractPluginDirectoryFromPath(lx, openFile.getAbsolutePath());
+      String fullShaderPath = pluginDir + "/" + baseFilename + ".vtx";
+      LX.log("Loading: " + baseFilename + " from " + pluginDir);
 
       lx.engine.addTask(() -> {
         LX.log("Running script name setting task");
         lx.command.perform(new LXCommand.Parameter.SetString(
           scriptName,
-          baseFilename
+          fullShaderPath
         ));
       });
     }
