@@ -1,7 +1,6 @@
 package xyz.theforks.ckvshader.patterns;
 
 import heronarts.glx.GLX;
-import heronarts.glx.ui.UI2dComponent;
 import heronarts.glx.ui.vg.VGraphics;
 import heronarts.lx.model.LXPoint;
 import xyz.theforks.ckvshader.util.GLUtil;
@@ -57,7 +56,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
   private static final Logger logger = Logger.getLogger(CkVShader.class.getName());
   public GL3 gl;
 
-  StringParameter scriptName = new StringParameter("scriptName", "default");
+  StringParameter scriptName = new StringParameter("scriptName", "CkVShader/shaders/default.vtx");
   CompoundParameter speed = new CompoundParameter("speed", 1f, 0f, 20f);
   CompoundParameter alphaThresh = new CompoundParameter("alfTh", 0.1f, -0.1f, 1f).
     setDescription("Intensity values below threshold will use transparency.");
@@ -198,13 +197,25 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     newSliderKeys.clear();
     removeSliderKeys.clear();
 
-    String shaderDir = GLUtil.shaderDir(lx);
-    boolean useCache = !forceReload && shaderCache.isCacheValid(shaderName, shaderDir) && 
+    // Resolve shader path to support plugin directories
+    GLUtil.ShaderPathInfo pathInfo = GLUtil.resolveShaderPath(lx, shaderName);
+    String shaderDir = pathInfo.shaderDir;
+    String resolvedShaderName = pathInfo.shaderName;
+    
+    // Update parameter to store full path for consistency
+    if (!shaderName.equals(pathInfo.fullPath)) {
+      scriptName.setValue(pathInfo.fullPath);
+    }
+    
+    boolean useCache = !forceReload && shaderCache.isCacheValid(resolvedShaderName, shaderDir) && 
                       shaderCache.isGLContextValid(gl);
 
+    if (!GLUtil.CACHING_ENABLED) {
+      useCache = false; // Disable caching if the flag is set
+    }
     if (useCache) {
       // Try to load from cache
-      ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(shaderName, gl);
+      ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(resolvedShaderName, gl);
       if (cachedResult != null) {
         LX.log("Loading shader from cache: " + shaderName);
         
@@ -271,7 +282,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     Set<String> dependencies = new HashSet<>();
 
     try {
-      GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(shaderDir, shaderName + ".vtx");
+      GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(shaderDir, resolvedShaderName + ".vtx");
       shaderSource = result.source;
       dependencies = result.dependencies;
     } catch (Exception ex) {
@@ -336,13 +347,15 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     }
 
     // Cache the compiled shader
-    try {
-      LX.log("Attempting to cache shader: " + shaderName + " with program ID: " + shaderProgramId);
-      shaderCache.cacheShader(shaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
-      LX.log("Cache attempt completed for: " + shaderName);
-    } catch (Exception ex) {
-      LX.log("Warning: Failed to cache shader " + shaderName + ": " + ex.getMessage());
-      ex.printStackTrace();
+    if (GLUtil.CACHING_ENABLED) {
+      try {
+        LX.log("Attempting to cache shader: " + resolvedShaderName + " with program ID: " + shaderProgramId);
+        shaderCache.cacheShader(resolvedShaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
+        LX.log("Cache attempt completed for: " + resolvedShaderName);
+      } catch (Exception ex) {
+        LX.log("Warning: Failed to cache shader " + resolvedShaderName + ": " + ex.getMessage());
+        ex.printStackTrace();
+      }
     }
 
     glDrawable.getContext().release();
@@ -460,7 +473,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     uiDevice.setContentWidth(minContentWidth);
     final UILabel fileLabel = (UILabel)
       new UILabel(0, 0, 120, 18)
-        .setLabel(pattern.scriptName.getString())
+        .setLabel(GLUtil.getShaderDisplayName(pattern.scriptName.getString()))
         .setBackgroundColor(LXColor.BLACK)
         .setBorderRounding(4)
         .setTextAlignment(VGraphics.Align.CENTER, VGraphics.Align.MIDDLE)
@@ -473,7 +486,7 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
     // Wrap the listener so we can clean it up on dispose.
     addParamListener(pattern.scriptName, new LXParameterListener() {
       public void onParameterChanged(LXParameter p) {
-        fileLabel.setLabel(pattern.scriptName.getString());
+        fileLabel.setLabel(GLUtil.getShaderDisplayName(pattern.scriptName.getString()));
       }
     });
 
@@ -491,7 +504,9 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
             "Vertex Shader",
             new String[] { "vtx" },
             GLUtil.shaderDir(lx) + File.separator,
-            (path) -> { onOpen(new File(path), sliders); }
+            (path) -> {
+              onOpen(new File(path), sliders); 
+            }
           );
         }
       }
@@ -518,23 +533,22 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
       .setDescription("Force reload shader (bypass cache)")
       .addToContainer(uiDevice);
 
-    final UIButton clearCacheButton = (UIButton) new UIButton(171, 0, 18, 18) {
-      @Override
-      public void onToggle(boolean on) {
-        if (on) {
-          lx.engine.addTask(() -> {
-            logger.info("Clearing shader cache");
-            shaderCache.clearCache();
-          });
+    if (GLUtil.CACHING_ENABLED) {
+      final UIButton clearCacheButton = (UIButton) new UIButton(171, 0, 18, 18) {
+        @Override
+        public void onToggle(boolean on) {
+          if (on) {
+            lx.engine.addTask(() -> {
+              logger.info("Clearing shader cache");
+              shaderCache.clearCache();
+            });
+          }
         }
-      }
-    }.setIcon(ui.theme.iconLoad)
-      .setMomentary(true)
-      .setDescription("Clear shader cache")
-      .addToContainer(uiDevice);
-
-
-
+      }.setIcon(ui.theme.iconLoad)
+        .setMomentary(true)
+        .setDescription("Clear shader cache")
+        .addToContainer(uiDevice);
+    }
 
     final UILabel error = (UILabel)
       new UILabel(0, 20, uiDevice.getContentWidth(), uiDevice.getContentHeight() - 20)
@@ -545,11 +559,16 @@ public class CkVShader extends LXPattern implements UIDeviceControls<CkVShader> 
 
     // Add sliders to container on every reload
     pattern.onReload.addListener(p -> {
-      //sliders.removeAllChildren();
-      new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
-        .addToContainer(sliders);
-      new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
-        .addToContainer(sliders);
+      sliders.removeAllChildren();
+      // Only add built-in sliders if they're not already present as ISF parameters
+      if (!pattern.scriptParams.containsKey("alfTh")) {
+        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
+          .addToContainer(sliders);
+      }
+      if (!pattern.scriptParams.containsKey("speed")) {
+        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
+          .addToContainer(sliders);
+      }
       for (CompoundParameter scriptParam : pattern.scriptParams.values()) {
         new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, scriptParam)
           .addToContainer(sliders);

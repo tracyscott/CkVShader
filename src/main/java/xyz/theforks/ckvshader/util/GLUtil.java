@@ -19,7 +19,6 @@ import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.logging.Logger;
 
 import static com.jogamp.opengl.GL.*;
 import static com.jogamp.opengl.GL.GL_POINTS;
@@ -32,6 +31,8 @@ import com.jogamp.opengl.GL2ES3;
 
 public class GLUtil {
   
+  public static final boolean CACHING_ENABLED = false;
+
   /**
    * Result container for shader loading with dependency tracking
    */
@@ -490,7 +491,76 @@ public class GLUtil {
   }
 
   static public String shaderDir(LX lx) {
-    return lx.getMediaPath() + File.separator + "CkVShader";
+    return lx.getMediaPath() + File.separator + "Data" + File.separator + "CkVShader" + File.separator + "shaders";
+  }
+
+  /**
+   * Resolve full shader path from plugin-scoped shader name.
+   * Supports both "shadername" and "PluginName/shaders/shadername.vtx" formats.
+   * 
+   * @param lx LX instance 
+   * @param shaderName Either simple name like "default" or full path like "CkVShader/shaders/default.vtx"
+   * @return Full path to shader directory and bare shader filename (without .vtx)
+   */
+  static public ShaderPathInfo resolveShaderPath(LX lx, String shaderName) {
+    if (shaderName.contains("/") && shaderName.contains("shaders/")) {
+      // Full plugin path format: "PluginName/shaders/filename.vtx"
+      String[] parts = shaderName.split("/shaders/");
+      if (parts.length == 2) {
+        String pluginName = parts[0];
+        String filename = parts[1];
+        if (filename.endsWith(".vtx")) {
+          filename = filename.substring(0, filename.length() - 4);
+        }
+        String shaderDir = lx.getMediaPath() + File.separator + "Data" + File.separator + pluginName + File.separator + "shaders";
+        return new ShaderPathInfo(shaderDir, filename, pluginName + "/shaders/" + filename + ".vtx");
+      }
+    }
+    
+    // Default to CkVShader for simple names
+    String filename = shaderName;
+    if (filename.endsWith(".vtx")) {
+      filename = filename.substring(0, filename.length() - 4);
+    }
+    return new ShaderPathInfo(shaderDir(lx), filename, "CkVShader/shaders/" + filename + ".vtx");
+  }
+
+  /**
+   * Extract display name from shader path (removes plugin prefix and .vtx extension)
+   */
+  static public String getShaderDisplayName(String shaderPath) {
+    if (shaderPath.contains("/shaders/")) {
+      String[] parts = shaderPath.split("/shaders/");
+      if (parts.length == 2) {
+        String filename = parts[1];
+        if (filename.endsWith(".vtx")) {
+          filename = filename.substring(0, filename.length() - 4);
+        }
+        return filename;
+      }
+    }
+    
+    // Fallback for simple names
+    String filename = shaderPath;
+    if (filename.endsWith(".vtx")) {
+      filename = filename.substring(0, filename.length() - 4);
+    }
+    return filename;
+  }
+
+  /**
+   * Container for shader path resolution results
+   */
+  static public class ShaderPathInfo {
+    public final String shaderDir;
+    public final String shaderName;
+    public final String fullPath;
+
+    public ShaderPathInfo(String shaderDir, String shaderName, String fullPath) {
+      this.shaderDir = shaderDir;
+      this.shaderName = shaderName;
+      this.fullPath = fullPath;
+    }
   }
 
   /**

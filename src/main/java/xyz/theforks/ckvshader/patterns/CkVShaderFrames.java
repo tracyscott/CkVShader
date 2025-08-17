@@ -10,7 +10,6 @@ import com.jogamp.opengl.util.GLBuffers;
 import com.jogamp.opengl.util.texture.awt.AWTTextureIO;
 import heronarts.glx.GLX;
 import heronarts.glx.ui.component.UIButton;
-import heronarts.glx.ui.component.UIKnob;
 import heronarts.glx.ui.component.UILabel;
 import heronarts.glx.ui.vg.VGraphics;
 import heronarts.lx.LX;
@@ -57,7 +56,7 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
   private static final Logger logger = Logger.getLogger(CkVShaderFrames.class.getName());
   public GL3 gl;
 
-  StringParameter scriptName = new StringParameter("scriptName", "texture");
+  StringParameter scriptName = new StringParameter("scriptName", "CkVShader/shaders/texture.vtx");
   StringParameter frameDir = new StringParameter("frameDir", "");
   CompoundParameter frameNumber = new CompoundParameter("frame", 0, 0, 1);
   CompoundParameter speed = new CompoundParameter("speed", 1f, 0f, 20f);
@@ -343,6 +342,9 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     boolean useCache = !forceReload && shaderCache.isCacheValid(shaderName, shaderDir) && 
                       shaderCache.isGLContextValid(gl);
 
+    if (!GLUtil.CACHING_ENABLED) {
+      useCache = false;
+    }
     if (useCache) {
       // Try to load from cache
       ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(shaderName, gl);
@@ -487,14 +489,16 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
       LX.log("Found audioTexture at location: " + fftTextureLoc);
     }
 
+    if (GLUtil.CACHING_ENABLED) {
     // Cache the compiled shader
-    try {
-      LX.log("Attempting to cache shader: " + shaderName + " with program ID: " + shaderProgramId);
-      shaderCache.cacheShader(shaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
-      LX.log("Cache attempt completed for: " + shaderName);
-    } catch (Exception ex) {
-      LX.log("Warning: Failed to cache shader " + shaderName + ": " + ex.getMessage());
-      ex.printStackTrace();
+      try {
+        LX.log("Attempting to cache shader: " + shaderName + " with program ID: " + shaderProgramId);
+        shaderCache.cacheShader(shaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
+        LX.log("Cache attempt completed for: " + shaderName);
+      } catch (Exception ex) {
+        LX.log("Warning: Failed to cache shader " + shaderName + ": " + ex.getMessage());
+        ex.printStackTrace();
+      }
     }
 
     CkVShader.glDrawable.getContext().release();
@@ -744,20 +748,22 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
       .setDescription("Force reload shader (bypass cache)")
       .addToContainer(uiDevice);
 
-    final UIButton clearCacheButton = (UIButton) new UIButton(259, 0, 18, 18) {
-      @Override
-      public void onToggle(boolean on) {
-        if (on) {
-          lx.engine.addTask(() -> {
-            logger.info("Clearing shader cache");
-            shaderCache.clearCache();
-          });
+    if (GLUtil.CACHING_ENABLED) {
+      final UIButton clearCacheButton = (UIButton) new UIButton(259, 0, 18, 18) {
+        @Override
+        public void onToggle(boolean on) {
+          if (on) {
+            lx.engine.addTask(() -> {
+              logger.info("Clearing shader cache");
+              shaderCache.clearCache();
+            });
+          }
         }
-      }
-    }.setIcon(ui.theme.iconLoad)
-      .setMomentary(true)
-      .setDescription("Clear shader cache")
-      .addToContainer(uiDevice);
+      }.setIcon(ui.theme.iconLoad)
+        .setMomentary(true)
+        .setDescription("Clear shader cache")
+        .addToContainer(uiDevice);
+    }
 
     final UI2dContainer sliders = (UI2dContainer)
       UI2dContainer.newHorizontalContainer(uiDevice.getContentHeight() - 22, 2)
@@ -774,10 +780,15 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     // Add sliders to container on every reload
     pattern.onReload.addListener(p -> {
       sliders.removeAllChildren();
-      new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
-        .addToContainer(sliders);
-      new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
-        .addToContainer(sliders);
+      // Only add built-in sliders if they're not already present as ISF parameters
+      if (!pattern.scriptParams.containsKey("alfTh")) {
+        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
+          .addToContainer(sliders);
+      }
+      if (!pattern.scriptParams.containsKey("speed")) {
+        new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
+          .addToContainer(sliders);
+      }
       new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, frameNumber)
         .addToContainer(sliders);
       for (CompoundParameter slider : pattern.scriptParams.values()) {

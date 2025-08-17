@@ -29,8 +29,6 @@ import static com.jogamp.opengl.GL2ES2.GL_LINK_STATUS;
  * Caches compiled OpenGL shader programs and associated metadata in the CkVShader/cache directory.
  */
 public class ShaderCache {
-    private static final Logger logger = Logger.getLogger(ShaderCache.class.getName());
-    
     private static ShaderCache instance;
     private final String cacheDir;
     private final String manifestPath;

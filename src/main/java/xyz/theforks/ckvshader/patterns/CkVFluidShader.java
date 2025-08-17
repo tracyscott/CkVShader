@@ -7,16 +7,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.jogamp.opengl.*;
 import com.jogamp.opengl.util.GLBuffers;
-import heronarts.glx.GLX;
 import heronarts.glx.ui.component.UIButton;
 import heronarts.glx.ui.component.UILabel;
 import heronarts.glx.ui.vg.VGraphics;
 import heronarts.lx.LX;
 import heronarts.lx.LXCategory;
-import heronarts.lx.LXComponent;
 import heronarts.lx.audio.GraphicMeter;
 import heronarts.lx.color.LXColor;
-import heronarts.lx.command.LXCommand;
 import heronarts.lx.model.LXPoint;
 import heronarts.lx.parameter.CompoundParameter;
 import heronarts.lx.parameter.LXParameter;
@@ -30,7 +27,6 @@ import heronarts.lx.utils.LXUtils;
 import heronarts.glx.ui.UI2dContainer;
 import heronarts.glx.ui.component.UISlider;
 
-import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -57,7 +53,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
     private static final Logger logger = Logger.getLogger(CkVFluidShader.class.getName());
     public GL3 gl;
 
-    StringParameter scriptName = new StringParameter("scriptName", "navierStokes");
+    StringParameter scriptName = new StringParameter("scriptName", "CkVShader/shaders/navierStokes.vtx");
     CompoundParameter speed = new CompoundParameter("speed", 1f, 0f, 20f);
     CompoundParameter alphaThresh = new CompoundParameter("alfTh", 0.1f, -0.1f, 1f)
             .setDescription("Intensity values below threshold will use transparency.");
@@ -257,6 +253,10 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         boolean useCache = !forceReload && shaderCache.isCacheValid(shaderName, shaderDir) && 
                           shaderCache.isGLContextValid(gl);
 
+        if (!GLUtil.CACHING_ENABLED) {
+            useCache = false;
+        }
+
         if (useCache) {
             // Try to load from cache (similar to parent class implementation)
             ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(shaderName, gl);
@@ -343,11 +343,13 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         findUniformLocations();
         
         // Cache the compiled shader
-        try {
-            shaderCache.cacheShader(shaderName, GLUtil.shaderDir(lx), shaderProgramId, 
+        if (GLUtil.CACHING_ENABLED) {
+            try {
+                shaderCache.cacheShader(shaderName, GLUtil.shaderDir(lx), shaderProgramId, 
                                   paramLocations, isfObj, dependencies, gl);
-        } catch (Exception ex) {
-            LX.log("Warning: Failed to cache fluid shader: " + ex.getMessage());
+            } catch (Exception ex) {
+                LX.log("Warning: Failed to cache fluid shader: " + ex.getMessage());
+            }
         }
     }
 
@@ -612,11 +614,15 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         pattern.onReload.addListener(p -> {
             sliders.removeAllChildren();
             
-            // Core framework parameters
-            new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
-                .addToContainer(sliders);
-            new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
-                .addToContainer(sliders);
+            // Core framework parameters - only add if not already present as ISF parameters
+            if (!pattern.scriptParams.containsKey("speed")) {
+                new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, speed)
+                    .addToContainer(sliders);
+            }
+            if (!pattern.scriptParams.containsKey("alfTh")) {
+                new UISlider(UISlider.Direction.VERTICAL, 40, sliders.getContentHeight() - 14, alphaThresh)
+                    .addToContainer(sliders);
+            }
 
             // All fluid simulation parameters loaded from shader ISF metadata
             for (CompoundParameter scriptParam : pattern.scriptParams.values()) {
