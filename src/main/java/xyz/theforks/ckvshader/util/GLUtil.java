@@ -261,6 +261,23 @@ public class GLUtil {
   static public String loadShader(String shaderDir, String shaderFile)
     throws Exception {
     String shaderBody = loadFile(shaderDir, shaderFile);
+    
+    // Handle #version replacement if 300es file exists
+    if (isOnly300es()) {
+      StringBuilder processed = new StringBuilder();
+      BufferedReader reader = new BufferedReader(new StringReader(shaderBody));
+      String line;
+      while ((line = reader.readLine()) != null) {
+        if (line.startsWith("#version")) {
+          processed.append("#version 300 es\n");
+        } else {
+          processed.append(line).append("\n");
+        }
+      }
+      reader.close();
+      shaderBody = processed.toString();
+    }
+    
     return preprocessShader(shaderDir, shaderBody);
   }
 
@@ -273,6 +290,22 @@ public class GLUtil {
     String shaderBody = loadFile(shaderDir, shaderFile);
     Set<String> dependencies = new HashSet<>();
     dependencies.add(mainShaderPath); // Include the main shader file itself
+    
+    // Handle #version replacement if 300es file exists
+    if (isOnly300es()) {
+      StringBuilder processed = new StringBuilder();
+      BufferedReader reader = new BufferedReader(new StringReader(shaderBody));
+      String line;
+      while ((line = reader.readLine()) != null) {
+        if (line.startsWith("#version")) {
+          processed.append("#version 300 es\n");
+        } else {
+          processed.append(line).append("\n");
+        }
+      }
+      reader.close();
+      shaderBody = processed.toString();
+    }
     
     String processedSource = preprocessShaderWithDependencies(shaderDir, shaderBody, dependencies);
     return new ShaderLoadResult(processedSource, dependencies);
@@ -373,7 +406,6 @@ public class GLUtil {
   static public String expandIncludes(String shaderDir, String input) throws IOException {
     boolean foundInclude = false;
     int lineCount = 0;
-    boolean isOnly300es = isOnly300es();
 
     StringBuilder output = new StringBuilder();
     BufferedReader reader = new BufferedReader(new StringReader(input));
@@ -400,11 +432,7 @@ public class GLUtil {
         // reset line counter to main file count
         output.append("#line ").append(lineCount + 1).append("\n");
       } else {
-        if (isOnly300es && line.startsWith("#version")) {
-          output.append("#version 300 es\n");
-        } else {
-          output.append(line).append("\n");
-        }
+        output.append(line).append("\n");
       }
     }
     reader.close();
