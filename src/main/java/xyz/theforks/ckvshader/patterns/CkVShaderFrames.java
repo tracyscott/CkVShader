@@ -338,8 +338,17 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     newSliderKeys.clear();
     removeSliderKeys.clear();
 
-    String shaderDir = GLUtil.shaderDir(lx);
-    boolean useCache = !forceReload && shaderCache.isCacheValid(shaderName, shaderDir) && 
+    // Resolve shader path to support plugin directories
+    GLUtil.ShaderPathInfo pathInfo = GLUtil.resolveShaderPath(lx, shaderName);
+    String shaderDir = pathInfo.shaderDir;
+    String resolvedShaderName = pathInfo.shaderName;
+    
+    // Update parameter to store full path for consistency
+    if (!shaderName.equals(pathInfo.fullPath)) {
+      scriptName.setValue(pathInfo.fullPath);
+    }
+    
+    boolean useCache = !forceReload && shaderCache.isCacheValid(resolvedShaderName, shaderDir) && 
                       shaderCache.isGLContextValid(gl);
 
     if (!GLUtil.CACHING_ENABLED) {
@@ -347,7 +356,7 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     }
     if (useCache) {
       // Try to load from cache
-      ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(shaderName, gl);
+      ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(resolvedShaderName, gl);
       if (cachedResult != null) {
         LX.log("Loading shader from cache: " + shaderName);
         
@@ -417,7 +426,7 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     Set<String> dependencies = new HashSet<>();
 
     try {
-      GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(shaderDir, shaderName + ".vtx");
+      GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(shaderDir, resolvedShaderName + ".vtx");
       shaderSource = result.source;
       dependencies = result.dependencies;
     } catch (Exception ex) {
@@ -517,11 +526,11 @@ public class CkVShaderFrames extends LXPattern implements UIDeviceControls<CkVSh
     if (GLUtil.CACHING_ENABLED) {
     // Cache the compiled shader
       try {
-        LX.log("Attempting to cache shader: " + shaderName + " with program ID: " + shaderProgramId);
-        shaderCache.cacheShader(shaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
-        LX.log("Cache attempt completed for: " + shaderName);
+        LX.log("Attempting to cache shader: " + resolvedShaderName + " with program ID: " + shaderProgramId);
+        shaderCache.cacheShader(resolvedShaderName, shaderDir, shaderProgramId, paramLocations, isfObj, dependencies, gl);
+        LX.log("Cache attempt completed for: " + resolvedShaderName);
       } catch (Exception ex) {
-        LX.log("Warning: Failed to cache shader " + shaderName + ": " + ex.getMessage());
+        LX.log("Warning: Failed to cache shader " + resolvedShaderName + ": " + ex.getMessage());
         ex.printStackTrace();
       }
     }

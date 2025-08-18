@@ -249,8 +249,17 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         newSliderKeys.clear();
         removeSliderKeys.clear();
 
-        String shaderDir = GLUtil.shaderDir(lx);
-        boolean useCache = !forceReload && shaderCache.isCacheValid(shaderName, shaderDir) && 
+        // Resolve shader path to support plugin directories
+        GLUtil.ShaderPathInfo pathInfo = GLUtil.resolveShaderPath(lx, shaderName);
+        String shaderDir = pathInfo.shaderDir;
+        String resolvedShaderName = pathInfo.shaderName;
+        
+        // Update parameter to store full path for consistency
+        if (!shaderName.equals(pathInfo.fullPath)) {
+            scriptName.setValue(pathInfo.fullPath);
+        }
+        
+        boolean useCache = !forceReload && shaderCache.isCacheValid(resolvedShaderName, shaderDir) && 
                           shaderCache.isGLContextValid(gl);
 
         if (!GLUtil.CACHING_ENABLED) {
@@ -259,7 +268,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
 
         if (useCache) {
             // Try to load from cache (similar to parent class implementation)
-            ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(shaderName, gl);
+            ShaderCache.CachedShaderResult cachedResult = shaderCache.loadCachedShader(resolvedShaderName, gl);
             if (cachedResult != null) {
                 LX.log("Loading fluid shader from cache: " + shaderName);
                 shaderProgramId = cachedResult.programId;
@@ -280,7 +289,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
 
         // Compile from source
         LX.log("Compiling fluid shader from source: " + shaderName);
-        compileShaderFromSource(shaderName);
+        compileShaderFromSource(resolvedShaderName, shaderDir);
         
         CkVShader.glDrawable.getContext().release();
         onReload.bang();
@@ -307,13 +316,13 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         }
     }
 
-    private void compileShaderFromSource(String shaderName) {
+    private void compileShaderFromSource(String resolvedShaderName, String shaderDir) {
         shaderProgramId = gl.glCreateProgram();
         String shaderSource = "";
         Set<String> dependencies = new HashSet<>();
 
         try {
-            GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(GLUtil.shaderDir(lx), shaderName + ".vtx");
+            GLUtil.ShaderLoadResult result = GLUtil.loadShaderWithDependencies(shaderDir, resolvedShaderName + ".vtx");
             shaderSource = result.source;
             dependencies = result.dependencies;
         } catch (Exception ex) {
@@ -345,7 +354,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
         // Cache the compiled shader
         if (GLUtil.CACHING_ENABLED) {
             try {
-                shaderCache.cacheShader(shaderName, GLUtil.shaderDir(lx), shaderProgramId, 
+                shaderCache.cacheShader(resolvedShaderName, shaderDir, shaderProgramId, 
                                   paramLocations, isfObj, dependencies, gl);
             } catch (Exception ex) {
                 LX.log("Warning: Failed to cache fluid shader: " + ex.getMessage());
@@ -596,7 +605,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
 
         final UILabel fileLabel = (UILabel)
             new UILabel(0, 0, 120, 18)
-                .setLabel(pattern.scriptName.getString())
+                .setLabel(GLUtil.getShaderDisplayName(pattern.scriptName.getString()))
                 .setBackgroundColor(LXColor.BLACK)
                 .setBorderRounding(4)
                 .setTextAlignment(VGraphics.Align.CENTER, VGraphics.Align.MIDDLE)
@@ -604,7 +613,7 @@ public class CkVFluidShader extends LXPattern implements UIDeviceControls<CkVFlu
                 .addToContainer(uiDevice);
 
         pattern.scriptName.addListener(p -> {
-            fileLabel.setLabel(pattern.scriptName.getString());
+            fileLabel.setLabel(GLUtil.getShaderDisplayName(pattern.scriptName.getString()));
         });
 
         final UIButton resetButton = (UIButton) new UIButton(148, 0, 18, 18) {

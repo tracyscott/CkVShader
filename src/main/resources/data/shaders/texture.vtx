@@ -63,6 +63,7 @@ out vec3 outColor;
 
 void main(){
     vec2 st = position.xy;
+    st.y = 1.0 - st.y;
     vec3 color = vec3(0.);
 
     // Center around origin for rotation

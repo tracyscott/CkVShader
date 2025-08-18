@@ -373,6 +373,7 @@ public class GLUtil {
   static public String expandIncludes(String shaderDir, String input) throws IOException {
     boolean foundInclude = false;
     int lineCount = 0;
+    boolean isOnly300es = isOnly300es();
 
     StringBuilder output = new StringBuilder();
     BufferedReader reader = new BufferedReader(new StringReader(input));
@@ -399,7 +400,11 @@ public class GLUtil {
         // reset line counter to main file count
         output.append("#line ").append(lineCount + 1).append("\n");
       } else {
-        output.append(line).append("\n");
+        if (isOnly300es && line.startsWith("#version")) {
+          output.append("#version 300 es\n");
+        } else {
+          output.append(line).append("\n");
+        }
       }
     }
     reader.close();
@@ -493,6 +498,12 @@ public class GLUtil {
 
   static public String shaderDir(LX lx) {
     return lx.getMediaPath() + File.separator + "Data" + File.separator + "CkVShader" + File.separator + "shaders";
+  }
+
+  static public boolean isOnly300es() {
+    // See if file 300es exists in current working directory.
+    File file = new File("300es");
+    return file.exists();
   }
 
   /**
