@@ -109,7 +109,7 @@ vec2 Hash12_Polar(float t) {
 
 float Explosion(vec2 uv, float t) {
     float sparks = 0.;
-    for (float i = 0; i < 100.; i++) {
+    for (float i = 0.; i < 100.; i++) {
         vec2 dir = Hash12_Polar(i+1.);
         float d = length(uv-dir*t*size);
         float brightness = mix(0.0005, 0.002, smoothstep(.05, 0., t));

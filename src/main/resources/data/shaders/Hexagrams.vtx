@@ -121,7 +121,7 @@ void main(){
     for (float i=0.; i<1.; i+= 1./layers) {
         float depth = fract(i + t);
         float scale = mix(6., .1, depth);
-        float fade = depth*smoothstep(1, .9, depth);
+        float fade = depth*smoothstep(1., .9, depth);
         float bright = HexLayer((uv*Rot(fTime*depth*.1*rspeed))*scale)*fade;
         col += paletteN(bright*pald + i*fTime*cspeed, pal)*bright;
         //col += paletteN(bright*i*fTime*cspeed, pal)*bright;
